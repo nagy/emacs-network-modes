@@ -20,17 +20,17 @@ network, and it runs only when invoked.
 | `network-modes.el`  | Entry point: requires the base mode and all six modes                   |
 | `net-mode.el`       | Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP         |
 | `net-geo.el`        | Country lookup from PDDL range CSVs, with binary search cache           |
-| `net-ip.el`         | IP parsing/formatting, special-purpose blocks, registry reader, IP mode |
+| `net-ip.el`         | IP parsing/formatting, blocks, registry reader, origin AS, IP mode      |
 | `net-cidr.el`       | Prefix arithmetic, CIDR mode                                            |
 | `net-mac.el`        | MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup             |
-| `net-asn.el`        | AS number parsing, IANA registry, ipverse metadata, ASN mode            |
+| `net-asn.el`        | AS parsing, IANA registry, ipverse metadata, IP to AS ranges, ASN mode  |
 | `net-domain.el`     | Domain parsing, Punycode encoder, PSL lookup, domain mode               |
 | `net-vsock.el`      | AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode       |
 | `ol-net.el`         | Opt-in Org link types (`net-*:` and `net:`)                             |
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (69 tests)                                                    |
+| `net-tests.el`      | ERT suite (74 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
 | `README.org`        | User documentation                                                      |
@@ -115,6 +115,7 @@ editing a database file invalidates the cache without a restart:
 | `net-mac--manuf-table`       | Wireshark manuf          | `net-mac--manuf-cache`            |
 | `net-asn--registry-rows`     | IANA AS numbers CSV      | `net-asn--registry-cache`         |
 | `net-asn-entry`              | ipverse as-metadata JSON | `net-asn--memo`, `net-asn--table` |
+| `net-asn-ip-entry`           | iptoasn range TSV (gzip) | none, binary search per lookup    |
 | `net-domain--psl-load`       | Public Suffix List       | `net-domain--psl-cache`           |
 | `net-vsock--services`        | IANA service names CSV   | `net-vsock--service-cache`        |
 
@@ -125,6 +126,18 @@ expects `"asn"` as the first key of the object.  `net-asn--scan-shape-p`
 checks that shape once per lookup, and any other file falls back to
 `net-asn--table`, the full parse.  `net-asn-load-database` builds that
 table for bulk sessions.
+
+The IP to AS number tables are large too, and they are sorted, so
+`net-asn-ip-entry` needs no cache.  `net-asn--insert-range-file`
+decompresses the gzip file into a temporary buffer, and
+`net-asn--search-row` binary searches the line starts there, so a
+lookup parses about twenty rows.  The reader gunzips with
+`zlib-decompress-region` instead of `insert-file-contents`, so a user
+who turned off `auto-compression-mode` still gets an answer.  The
+search keeps `low` on a line start, because a midpoint can fall inside
+the current low line.  `net-ip--range-prefix` turns the covering
+range into a prefix only when the range is a single aligned block, so
+an aggregated iptoasn row renders as a range.
 
 ### Address arithmetic
 

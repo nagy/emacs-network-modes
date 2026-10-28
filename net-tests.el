@@ -923,6 +923,79 @@ the start of the buffer."
       (net-geo-clear-cache)
       (should-not net-geo--cache))))
 
+;;; net-asn IP ranges
+
+(defconst net-tests--ip2asn
+  (concat "1.0.0.0\t1.0.0.255\t13335\tUS\tCLOUDFLARENET\n"
+          "1.0.1.0\t1.0.3.255\t0\tNone\tNot routed\n"
+          "192.0.2.0\t192.0.2.255\t64500\tUS\tEXAMPLE-NET\n")
+  "Small range table in the iptoasn format.")
+
+(defun net-tests--ip-number (address)
+  "Return the integer of ADDRESS."
+  (plist-get (net-ip-parse address) :value))
+
+(ert-deftest net-tests-asn-ip-entry ()
+  "The origin AS lookup binary searches a sorted range table."
+  (net-tests--with-file net-tests--ip2asn
+    (let ((net-asn-ip-database-file net-tests--file))
+      (let ((entry (net-asn-ip-entry (net-tests--ip-number "1.0.0.5") 4)))
+        (should (= (plist-get entry :asn) 13335))
+        (should (equal (plist-get entry :country) "US"))
+        (should (equal (plist-get entry :description) "CLOUDFLARENET"))
+        (should (= (plist-get entry :start) (net-tests--ip-number "1.0.0.0")))
+        (should (= (plist-get entry :end) (net-tests--ip-number "1.0.0.255"))))
+      (should (= (plist-get (net-asn-ip-entry
+                             (net-tests--ip-number "1.0.3.255") 4)
+                            :asn)
+                 0))
+      (should-not (net-asn-ip-entry (net-tests--ip-number "1.0.4.0") 4))
+      (should-not (net-asn-ip-entry (net-tests--ip-number "0.0.0.1") 4)))))
+
+(ert-deftest net-tests-asn-ip-entry-gzip ()
+  "The lookup gunzips a file with a gzip suffix."
+  (let ((file (make-temp-file "net-tests" nil ".tsv.gz")))
+    (unwind-protect
+        (progn
+          (with-temp-buffer
+            (insert net-tests--ip2asn)
+            (write-region (point-min) (point-max) file nil 'silent))
+          (should (string-suffix-p ".gz" file))
+          (let ((net-asn-ip-database-file file))
+            (should (= (plist-get (net-asn-ip-entry
+                                   (net-tests--ip-number "192.0.2.7") 4)
+                                  :asn)
+                       64500))))
+      (delete-file file))))
+
+(ert-deftest net-tests-asn-ip-entry-missing ()
+  "A missing range file reports no entry."
+  (let ((net-asn-ip-database-file nil))
+    (should-not (net-asn-ip-entry (net-tests--ip-number "1.0.0.1") 4))))
+
+(ert-deftest net-tests-ip-range-prefix ()
+  "Only an aligned single-prefix range becomes a prefix."
+  (should (equal (net-ip--range-prefix (net-tests--ip-number "1.1.1.0")
+                                       (net-tests--ip-number "1.1.1.255") 4)
+                 "1.1.1.0/24"))
+  (should (equal (net-ip--range-prefix 0 (1- (ash 1 32)) 4) "0.0.0.0/0"))
+  (should (equal (net-ip--range-prefix 1 1 4) "0.0.0.1/32"))
+  (should-not (net-ip--range-prefix (net-tests--ip-number "1.1.1.0")
+                                    (net-tests--ip-number "1.1.2.0") 4)))
+
+(ert-deftest net-tests-ip-buffer-asn ()
+  "The IP buffer names the origin AS and the covering prefix."
+  (net-tests--with-file net-tests--ip2asn
+    (let ((net-asn-ip-database-file net-tests--file)
+          (net-geo-database-file nil)
+          (net-geo-database-file-v6 nil))
+      (with-current-buffer (net-ip-inspect "1.0.0.5")
+        (should (string-match-p "Autonomous System" (buffer-string)))
+        (should (string-match-p "\\bAS13335\\b" (buffer-string)))
+        (should (string-match-p "1\\.0\\.0\\.0/24" (buffer-string))))
+      (with-current-buffer (net-ip-inspect "1.0.2.1")
+        (should (string-match-p "0 (not routed)" (buffer-string)))))))
+
 ;;; Integrations
 
 (ert-deftest net-tests-xref-backend ()

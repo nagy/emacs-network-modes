@@ -80,6 +80,18 @@
       type = "file";
       flake = false;
     };
+    # IP to AS number ranges.  One file per family, both sorted by
+    # start address, so the reader can binary search them.
+    iptoasnV4 = {
+      url = "https://iptoasn.com/data/ip2asn-v4.tsv.gz";
+      type = "file";
+      flake = false;
+    };
+    iptoasnV6 = {
+      url = "https://iptoasn.com/data/ip2asn-v6.tsv.gz";
+      type = "file";
+      flake = false;
+    };
   };
 
   outputs =
@@ -124,6 +136,8 @@
                 ln -s ${inputs.ianaIpv4} $out/iana-ipv4-special-registry.csv
                 ln -s ${inputs.ianaIpv6} $out/iana-ipv6-special-registry.csv
                 ln -s ${inputs.ianaServices} $out/service-names-port-numbers.csv
+                ln -s ${inputs.iptoasnV4} $out/ip2asn-v4.tsv.gz
+                ln -s ${inputs.iptoasnV6} $out/ip2asn-v6.tsv.gz
                 ln -s ${inputs.ieeeOui} $out/oui.csv
                 ln -s ${inputs.ieeeMam} $out/mam.csv
                 ln -s ${inputs.ieeeOui36} $out/oui36.csv

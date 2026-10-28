@@ -42,15 +42,30 @@
 ;; parsing the whole array.  `net-asn-load-database' builds a full hash
 ;; table for users who inspect many AS numbers in one session.
 ;;
+;; The reverse direction, the origin AS of an IP address, needs BGP
+;; data: RDAP publishes addresses and entities, not routing.  Two
+;; iptoasn range files answer it offline:
+;;
+;;   net-asn-ip-database-file      iptoasn ip2asn-v4.tsv.gz
+;;   net-asn-ip-database-file-v6   iptoasn ip2asn-v6.tsv.gz
+;;
+;; Each file is a tab separated range table sorted by start address.
+;; `net-asn-ip-entry' decompresses the file, then binary searches the
+;; line starts, so one lookup parses about twenty rows instead of the
+;; whole file.
+;;
 ;; Entry points:
 ;;
 ;;   M-x net-asn-inspect      - inspect an AS number
+;;   M-x net-asn-ip-entry     - find the origin AS of an IP address
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'json)
 (require 'net-mode)
+
+(declare-function net-ip-parse "net-ip")
 
 (defcustom net-asn-database-file (net-data-file "as.json")
   "AS metadata database in the ipverse as-metadata JSON format, or nil.
@@ -68,6 +83,24 @@ Used to report the registry block of an AS number."
 (defcustom net-asn-registry-file-v2 (net-data-file "as-numbers-2.csv")
   "IANA 32-bit AS number registry CSV file, or nil.
 Used to report the registry block of an AS number."
+  :type '(choice (const :tag "None" nil) file)
+  :group 'net)
+
+(defcustom net-asn-ip-database-file (net-data-file "ip2asn-v4.tsv.gz")
+  "IPv4 to AS number range file, or nil.
+Each tab separated line holds start address, end address, AS number,
+country code and AS description.  The file must be sorted by start
+address.  Download it from https://iptoasn.com.  The gzip form stays
+compressed, so the option accepts the upstream file as it is."
+  :type '(choice (const :tag "None" nil) file)
+  :group 'net)
+
+(defcustom net-asn-ip-database-file-v6 (net-data-file "ip2asn-v6.tsv.gz")
+  "IPv6 to AS number range file, or nil.
+Each tab separated line holds start address, end address, AS number,
+country code and AS description.  The file must be sorted by start
+address.  Download it from https://iptoasn.com.  The gzip form stays
+compressed, so the option accepts the upstream file as it is."
   :type '(choice (const :tag "None" nil) file)
   :group 'net)
 
@@ -288,6 +321,114 @@ lookup path scans the file for one object and needs no hash table."
         (setq net-asn--memo
               (cons (cons (list key asn) (or entry 'missing)) net-asn--memo))
         entry)))))
+
+;;; IP addresses to AS numbers
+
+(defun net-asn--ip-file (version)
+  "Return the IP to AS number range file of VERSION, or nil."
+  (if (= version 4)
+      net-asn-ip-database-file
+    net-asn-ip-database-file-v6))
+
+(defun net-asn--insert-range-file (file)
+  "Insert the range table FILE into the current buffer.
+Decompress a gzip file here, so the lookup does not depend on
+`auto-compression-mode'."
+  (if (string-suffix-p ".gz" file)
+      (progn
+        (set-buffer-multibyte nil)
+        (insert-file-contents-literally file)
+        (zlib-decompress-region (point-min) (point-max))
+        (set-buffer-multibyte t))
+    (insert-file-contents file)))
+
+(defun net-asn--range-fields ()
+  "Return the fields of the range table row at point."
+  (split-string (buffer-substring-no-properties
+                 (line-beginning-position) (line-end-position))
+                "\t"))
+
+(defun net-asn--address-number (text)
+  "Return the address integer of TEXT.
+Accept a plain number or an address that `net-ip-parse' reads."
+  (if (string-match-p "\\`[0-9]+\\'" text)
+      (string-to-number text)
+    (unless (fboundp 'net-ip-parse)
+      (require 'net-ip nil t))
+    (when-let* ((parsed (net-ip-parse text)))
+      (plist-get parsed :value))))
+
+(defun net-asn--row-start (position)
+  "Return the first address of the range table row at POSITION."
+  (save-excursion
+    (goto-char position)
+    (net-asn--address-number (car (net-asn--range-fields)))))
+
+(defun net-asn--before-p (position address)
+  "Return non-nil when the range row at POSITION starts at or before ADDRESS."
+  (let ((start (net-asn--row-start position)))
+    (and start (<= start address))))
+
+(defun net-asn--search-row (address)
+  "Return the position of the range table row that can hold ADDRESS.
+The current buffer holds a table sorted by start address.  Binary
+search the line starts, so a lookup parses about twenty rows."
+  (let ((low (point-min))
+        (high (point-max))
+        (found nil))
+    (while (< low high)
+      (goto-char (/ (+ low high) 2))
+      (forward-line 0)
+      (let ((position (point)))
+        (cond
+         ;; The midpoint fell inside the line that already begins at
+         ;; LOW, so take that row into account and step past it.
+         ((<= position low)
+          (when (net-asn--before-p low address)
+            (setq found low))
+          (goto-char low)
+          (if (zerop (forward-line 1))
+              (setq low (point))
+            (setq low high)))
+         ((net-asn--before-p position address)
+          (setq low position
+                found position))
+         (t
+          (setq high position)))))
+    found))
+
+;;;###autoload
+(defun net-asn-ip-entry (value version)
+  "Return the routing entry of the address VALUE of VERSION, or nil.
+The entry is a plist with :asn, :country, :description, :start and
+:end.  Return nil when the database is missing or holds no covering
+range."
+  (let ((file (net-asn--ip-file version)))
+    (when (net-data-available-p file)
+      (with-temp-buffer
+        (net-asn--insert-range-file file)
+        (when-let* ((position (net-asn--search-row value)))
+          (goto-char position)
+          (let* ((fields (net-asn--range-fields))
+                 (start (net-asn--address-number (nth 0 fields)))
+                 (end (net-asn--address-number (nth 1 fields))))
+            (when (and start end (<= start value) (<= value end))
+              (list :asn (string-to-number (nth 2 fields))
+                    :country (nth 3 fields)
+                    :description (nth 4 fields)
+                    :start start
+                    :end end))))))))
+
+(defun net-asn-ip-description (file)
+  "Return a one-line description of the range FILE.
+A file in the Nix store has an epoch modification time, so report it
+as a pinned copy instead of a meaningless date."
+  (let* ((attributes (file-attributes file))
+         (time (file-attribute-modification-time attributes))
+         (date (if (time-less-p time (encode-time 86400 0 0 1 1 1980))
+                   "pinned copy"
+                 (format-time-string "%Y-%m-%d" time))))
+    (format "%s, %s" (file-name-nondirectory file) date)))
 
 ;;; Display
 

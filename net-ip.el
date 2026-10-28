@@ -28,8 +28,9 @@
 
 ;; `net-ip-mode' displays one IPv4 or IPv6 address: its integer value,
 ;; its canonical forms, its special-purpose classification, its reverse
-;; DNS name, the embedded address of transition mechanisms, and the
-;; country of the covering prefix when the GeoIP database is available.
+;; DNS name, the embedded address of transition mechanisms, the country
+;; of the covering prefix when the GeoIP database is available, and the
+;; origin autonomous system when the iptoasn database is available.
 ;;
 ;; The parser and formatter in this file are also the foundation of
 ;; `net-cidr-mode': prefixes use bignums, so the same arithmetic works
@@ -43,6 +44,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'net-asn)
 (require 'net-geo)
 (require 'net-mode)
 (require 'seq)
@@ -567,6 +569,54 @@ multicast blocks stay classified."
           (net-insert-field "Country" "no match")))
       (net-insert-text "Database" (net-geo-description file version)))))
 
+(defun net-ip--range-prefix (start end version)
+  "Return the prefix text of the address range START to END of VERSION.
+Return nil when the range is not exactly one aligned prefix block."
+  (let* ((size (1+ (- end start)))
+         (bits (if (= version 4) net-ip--ipv4-bits net-ip--ipv6-bits))
+         (value size)
+         (shift 0))
+    (while (and (> value 1) (zerop (logand value 1)))
+      (setq value (ash value -1))
+      (cl-incf shift))
+    (let ((length (- bits shift)))
+      (when (and (= value 1)
+                 (>= length 0)
+                 (zerop (logand start (1- size))))
+        (format "%s/%d" (net-ip-format start version) length)))))
+
+(defun net-ip--insert-asn-section (parsed)
+  "Insert the origin autonomous system of PARSED when the database exists."
+  (let* ((version (plist-get parsed :version))
+         (value (plist-get parsed :value))
+         (file (if (= version 4)
+                   net-asn-ip-database-file
+                 net-asn-ip-database-file-v6)))
+    (when (net-data-available-p file)
+      (net-insert-heading "Autonomous System")
+      (let ((entry (net-asn-ip-entry value version)))
+        (if (null entry)
+            (net-insert-field "AS" "no match")
+          (let ((asn (plist-get entry :asn))
+                (start (plist-get entry :start))
+                (end (plist-get entry :end))
+                (country (plist-get entry :country)))
+            (if (zerop asn)
+                (net-insert-field "AS" "0 (not routed)")
+              (net-insert-link "AS" 'asn (format "AS%d" asn)))
+            (unless (zerop asn)
+              (net-insert-field "Country"
+                                (unless (equal country "None") country))
+              (net-insert-field "Organisation"
+                                (plist-get entry :description)))
+            (if-let* ((prefix (net-ip--range-prefix start end version)))
+                (net-insert-link "Prefix" 'cidr prefix)
+              (net-insert-field "Range"
+                                (format "%s - %s"
+                                        (net-ip-format start version)
+                                        (net-ip-format end version)))))))
+      (net-insert-text "Database" (net-asn-ip-description file)))))
+
 (defun net-ip--display ()
   "Render the IP address in the current buffer."
   (let* ((parsed (net-ip-parse net--value))
@@ -581,6 +631,7 @@ multicast blocks stay classified."
     (net-ip--insert-reverse-section parsed)
     (net-ip--insert-related-section parsed)
     (net-ip--insert-geo-section parsed)
+    (net-ip--insert-asn-section parsed)
     (setq-local net--rdap-type "ip"
                 net--rdap-key (net-ip-format (plist-get parsed :value)
                                              version))))

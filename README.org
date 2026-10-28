@@ -11,14 +11,14 @@ opens.
 
 * Modes
 
-| Mode              | Example input        | What it shows                                        |
-|-------------------+----------------------+------------------------------------------------------|
-| =net-ip-mode=     | =192.0.2.1=          | integer, hex, binary, class, special-purpose block, reverse DNS, embedded transition addresses, GeoIP country |
-| =net-cidr-mode=   | =10.0.0.0/8=         | network, last address, netmask, wildcard, host counts, broadcast, reverse zone, IANA registry flags |
-| =net-mac-mode=    | =aa:bb:cc:dd:ee:ff=  | notations, integer, I/G and U/L bits, known multicast names, IEEE vendor, registry and organization address, derived IPv6 link-local |
-| =net-asn-mode=    | =AS13335= or =1.10=  | asplain, ASDOT, 16/32-bit class, reservation status, IANA block, ipverse metadata and routing statistics |
-| =net-domain-mode= | =www.example.co.uk=  | labels, Punycode, TLD, public suffix, registrable domain, hostname validity |
-| =net-vsock-mode=  | =2:22=               | CID, port, reserved CID names, `sockaddr_vm` layout, IANA services with the same port |
+| Mode            | Example input     | What it shows                                                                                                                        |
+|-----------------+-------------------+--------------------------------------------------------------------------------------------------------------------------------------|
+| =net-ip-mode=     | =192.0.2.1=         | integer, hex, binary, class, special-purpose block, reverse DNS, embedded transition addresses, GeoIP country, origin AS             |
+| =net-cidr-mode=   | =10.0.0.0/8=        | network, last address, netmask, wildcard, host counts, broadcast, reverse zone, IANA registry flags                                  |
+| =net-mac-mode=    | =aa:bb:cc:dd:ee:ff= | notations, integer, I/G and U/L bits, known multicast names, IEEE vendor, registry and organization address, derived IPv6 link-local |
+| =net-asn-mode=    | =AS13335= or =1.10=   | asplain, ASDOT, 16/32-bit class, reservation status, IANA block, ipverse metadata and routing statistics                             |
+| =net-domain-mode= | =www.example.co.uk= | labels, Punycode, TLD, public suffix, registrable domain, hostname validity                                                          |
+| =net-vsock-mode=  | =2:22=              | CID, port, reserved CID names, `sockaddr_vm` layout, IANA services with the same port                                                |
 
 * Usage
 
@@ -43,16 +43,16 @@ a URL counts as an address.
 
 ** Key bindings
 
-| Key   | Command          | Description                      |
-|-------+------------------+----------------------------------|
-| =RET= | =push-button=    | follow a field or address button |
-| =TAB= | =forward-button= | move to the next button          |
-| =S-TAB= | =backward-button= | move to the previous button    |
-| =q=   | =quit-window=    | bury the inspect buffer          |
-| =gr=  | =revert-buffer=  | render the value again           |
-| =w=   | =net-copy-value= | copy the inspected value         |
-| =b=   | =net-rdap=       | fetch RDAP data for this value   |
-| =i=   | =net-inspect=    | inspect the address at point     |
+| Key   | Command         | Description                      |
+|-------+-----------------+----------------------------------|
+| =RET=   | =push-button=     | follow a field or address button |
+| =TAB=   | =forward-button=  | move to the next button          |
+| =S-TAB= | =backward-button= | move to the previous button      |
+| =q=     | =quit-window=     | bury the inspect buffer          |
+| =gr=    | =revert-buffer=   | render the value again           |
+| =w=     | =net-copy-value=  | copy the inspected value         |
+| =b=     | =net-rdap=        | fetch RDAP data for this value   |
+| =i=     | =net-inspect=     | inspect the address at point     |
 
 Every field is a button: =RET= or the button's default action copies
 its value.  Related addresses (host prefix, parent prefix, embedded
@@ -83,22 +83,29 @@ never touches the network.
 Every mode works offline and degrades gracefully when a database is
 missing: it still parses the address and reports the missing source.
 
-| Database                                | Mode            | Option                        | License     | Source |
-|-----------------------------------------+-----------------+-------------------------------+-------------+--------|
-| IANA IPv4/IPv6 special-purpose registry | =net-ip-mode=, =net-cidr-mode= | =net-ip-registry-file=, =-v6= | IANA public data | https://www.iana.org/assignments/iana-ipv4-special-registry/ |
-| IANA 16/32-bit AS numbers               | =net-asn-mode=  | =net-asn-registry-file=, =-v2=  | IANA public data | https://www.iana.org/assignments/as-numbers/ |
-| IANA service names and port numbers     | =net-vsock-mode= | =net-vsock-service-file=       | IANA public data | https://www.iana.org/assignments/service-names-port-numbers/ |
-| Public Suffix List                      | =net-domain-mode= | =net-domain-psl-file=          | MPL 2.0     | https://publicsuffix.org/list/public_suffix_list.dat |
-| ipverse as-metadata (JSON)              | =net-asn-mode=  | =net-asn-database-file=        | CC0 1.0     | https://github.com/ipverse/as-metadata |
-| ip-location-db user-country (CSV)       | =net-ip-mode=   | =net-geo-database-file=, =-v6=  | PDDL 1.0    | https://github.com/sapics/ip-location-db |
-| IEEE MAC address registries             | =net-mac-mode=  | =net-mac-registry-directory=   | IEEE registry terms | https://standards-oui.ieee.org/ |
-| Wireshark manuf (optional)              | =net-mac-mode=  | =net-mac-manuf-file=           | Wireshark licence | https://www.wireshark.org/download/automated/data/manuf |
+| Database                                | Mode                       | Option                        | License             | Source                                                       |
+|-----------------------------------------+----------------------------+-------------------------------+---------------------+--------------------------------------------------------------|
+| IANA IPv4/IPv6 special-purpose registry | =net-ip-mode=, =net-cidr-mode= | =net-ip-registry-file=, =-v6=     | IANA public data    | https://www.iana.org/assignments/iana-ipv4-special-registry/ |
+| IANA 16/32-bit AS numbers               | =net-asn-mode=               | =net-asn-registry-file=, =-v2=    | IANA public data    | https://www.iana.org/assignments/as-numbers/                 |
+| IANA service names and port numbers     | =net-vsock-mode=             | =net-vsock-service-file=        | IANA public data    | https://www.iana.org/assignments/service-names-port-numbers/ |
+| Public Suffix List                      | =net-domain-mode=            | =net-domain-psl-file=           | MPL 2.0             | https://publicsuffix.org/list/public_suffix_list.dat         |
+| ipverse as-metadata (JSON)              | =net-asn-mode=               | =net-asn-database-file=         | CC0 1.0             | https://github.com/ipverse/as-metadata                       |
+| iptoasn IP to AS number ranges (TSV)    | =net-ip-mode=                | =net-asn-ip-database-file=, =-v6= | PDDL 1.0            | https://iptoasn.com                                          |
+| ip-location-db user-country (CSV)       | =net-ip-mode=                | =net-geo-database-file=, =-v6=    | PDDL 1.0            | https://github.com/sapics/ip-location-db                     |
+| IEEE MAC address registries             | =net-mac-mode=               | =net-mac-registry-directory=    | IEEE registry terms | https://standards-oui.ieee.org/                              |
+| Wireshark manuf (optional)              | =net-mac-mode=               | =net-mac-manuf-file=            | Wireshark licence   | https://www.wireshark.org/download/automated/data/manuf      |
 
 The IEEE registries ship with the package: five CSVs split by
 assignment size, each row naming its registry (MA-L, MA-M, MA-S, IAB or
 CID).  They replace the former maclookup.app JSON source and add the
 organization address.  Wireshark's =manuf= file stays optional and adds
 short vendor names.
+
+The origin AS of an address comes from the iptoasn range tables, not
+from RDAP: RDAP publishes addresses and entities, but not routing.
+Both tables hold roughly 700 000 sorted ranges and stay gzipped.  The
+lookup decompresses one file, then binary searches the line starts, so
+it reads about twenty rows instead of the whole table.
 
 ** One directory for everything
 
@@ -116,6 +123,8 @@ cid.csv
 iab.csv
 iana-ipv4-special-registry.csv
 iana-ipv6-special-registry.csv
+ip2asn-v4.tsv.gz
+ip2asn-v6.tsv.gz
 mam.csv
 oui.csv
 oui36.csv
@@ -154,10 +163,10 @@ and =version=.  An =emacs= override moves the default =emacsPackages=
 and =evil= with it.
 
 Upstream licences of the pinned data: IANA registries are public data,
-as-metadata is CC0 1.0, ip-location-db user-country is PDDL 1.0, the
-Public Suffix List is MPL 2.0, and the IEEE registries come from the
-IEEE registration authority.  None of them is copied into this
-repository.
+as-metadata is CC0 1.0, ip-location-db user-country is PDDL 1.0,
+iptoasn is PDDL 1.0, the Public Suffix List is MPL 2.0, and the IEEE
+registries come from the IEEE registration authority.  None of them is
+copied into this repository.
 
 * Integrations
 
@@ -191,14 +200,14 @@ They are loaded on request:
 state maps take precedence over a major mode map, so the bindings give
 the commands of =net-mode-map= a state key:
 
-| Key        | Command                | Description                     |
-|------------+------------------------+---------------------------------|
-| =RET=        | =push-button=          | follow a field or address button |
-| =q=          | =quit-window=          | bury the inspect buffer         |
-| =gr=         | =revert-buffer=        | render the value again          |
-| =w=          | =net-copy-value=       | copy the inspected value        |
-| =b=          | =net-rdap=             | fetch RDAP data for this value  |
-| =i=          | =net-inspect=          | inspect the address at point    |
+| Key | Command        | Description                      |
+|-----+----------------+----------------------------------|
+| =RET= | =push-button=    | follow a field or address button |
+| =q=   | =quit-window=    | bury the inspect buffer          |
+| =gr=  | =revert-buffer=  | render the value again           |
+| =w=   | =net-copy-value= | copy the inspected value         |
+| =b=   | =net-rdap=       | fetch RDAP data for this value   |
+| =i=   | =net-inspect=    | inspect the address at point     |
 
 The motions =j=, =k=, =gg=, =G=, =C-d=, =C-u=, =/=, =n= and =N= stay
 evil.  A read-only buffer has nothing to insert or paste, so the
