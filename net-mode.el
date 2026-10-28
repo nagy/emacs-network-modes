@@ -1,0 +1,651 @@
+;;; net-mode.el --- Base major mode for network address inspection  -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026  Daniel Nagy
+
+;; Author: Daniel Nagy
+;; Version: 0.1.0
+;; Keywords: tools, network
+;; Package-Requires: ((emacs "31.1"))
+;; URL: https://github.com/nagy/emacs-network-modes
+
+;; This file is not part of GNU Emacs.
+
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU Affero General Public License as
+;; published by the Free Software Foundation, either version 3 of the
+;; License, or (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU Affero General Public License for more details.
+
+;; You should have received a copy of the GNU Affero General Public
+;; License along with this program.  If not, see
+;; <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; This package provides read-only major modes that inspect network
+;; addresses: IP addresses, CIDR prefixes, MAC addresses, autonomous
+;; system numbers, domain names and AF_VSOCK addresses.
+;;
+;; Every mode derives from `net-mode', which itself derives from
+;; `special-mode'.  `net-mode' supplies the shared machinery:
+;;
+;;   - a buffer naming scheme, one buffer per inspected value
+;;   - a read-only renderer with copyable field buttons
+;;   - a header line with a one-line classification
+;;   - a bookmark handler per inspected value
+;;   - an explicit RDAP lookup command, never automatic
+;;   - `net-inspect', the dispatcher that sniffs the token at point
+;;
+;; Each concrete mode registers itself in `net-kinds' with an opener
+;; and a sniffer.  `net-inspect' and `net-sniff' use that registry, so
+;; the dispatcher never needs a hard dependency on any mode file.
+;;
+;; Display buffers stay offline.  The only network access happens when
+;; the user invokes `net-rdap' from a buffer with an RDAP identity.
+;;
+;; Entry points:
+;;
+;;   M-x net-inspect      - inspect the address at point, or ask
+;;   M-x net-open         - open a value of a known kind
+;;   M-x net-rdap         - fetch RDAP data for the current value
+;;   M-x net-copy-value   - copy the inspected value to the kill ring
+
+;;; Code:
+
+(require 'bookmark)
+(require 'button)
+(require 'cl-lib)
+(require 'json)
+(require 'seq)
+(require 'subr-x)
+(require 'url)
+(require 'url-http)
+
+(defgroup net nil
+  "Inspect network addresses in read-only buffers."
+  :group 'tools
+  :prefix "net-"
+  :link '(url-link :tag "Repository"
+                   "https://github.com/nagy/emacs-network-modes"))
+
+(defcustom net-data-directory nil
+  "Directory that holds the bundled network databases.
+The package can inspect every address without it.  The directory lets
+the modes report vendor, registry, country and autonomous system
+metadata.  The Nix package sets this to a store path that holds the
+downloaded databases.  A nil value means no bundled databases."
+  :type '(choice (const :tag "None" nil) directory)
+  :group 'net)
+
+(defcustom net-buffer-name-format "*net-%s %s*"
+  "Format of inspect buffer names.
+The first argument is the kind name, for example \"ip\".  The second
+argument is the canonical address string."
+  :type 'string
+  :group 'net)
+
+(defcustom net-rdap-bootstrap-url "https://rdap.org"
+  "RDAP bootstrap base URL.
+`net-rdap' appends TYPE/KEY to this URL, for example
+\"ip/192.0.2.1\".  The default redirects to the authoritative registry."
+  :type 'string
+  :group 'net)
+
+(defface net-heading-face
+  '((t :inherit outline-1 :weight bold))
+  "Face for section headings in network inspect buffers."
+  :group 'net)
+
+(defface net-field-face
+  '((t :inherit font-lock-type-face))
+  "Face for field labels in network inspect buffers."
+  :group 'net)
+
+(defface net-value-face
+  '((t :inherit font-lock-string-face))
+  "Face for field values in network inspect buffers."
+  :group 'net)
+
+(defface net-warning-face
+  '((t :inherit warning))
+  "Face for warnings in network inspect buffers."
+  :group 'net)
+
+(defface net-muted-face
+  '((t :inherit shadow))
+  "Face for secondary and unknown values in network inspect buffers."
+  :group 'net)
+
+(defconst net--field-width 24
+  "Width of the label column in network inspect buffers.")
+
+(defvar-local net--kind nil
+  "Symbol naming the kind of the value in this buffer.")
+
+(defvar-local net--value nil
+  "Canonical string of the inspected value in this buffer.")
+
+(defvar-local net--render-function nil
+  "Function that renders the inspected value into the current buffer.")
+
+(defvar-local net--summary nil
+  "One-line classification of the inspected value.")
+
+(defvar-local net--rdap-type nil
+  "RDAP object type of the inspected value, or nil.
+The value is one of \"ip\", \"domain\" or \"autnum\".")
+
+(defvar-local net--rdap-key nil
+  "RDAP lookup key of the inspected value, or nil.")
+
+(defvar-local net--rdap-start nil
+  "Marker at the start of the rendered RDAP section, or nil.
+The next lookup replaces that section instead of appending another.")
+
+(defvar net-kinds nil
+  "Alist of registered network address kinds.
+Each element is (KIND . PLIST).  PLIST holds :label, :open, :sniff
+and :priority.  Mode files register themselves with
+`net-register-kind'.")
+
+(defconst net--kind-features
+  '(net-cidr net-mac net-vsock net-asn net-domain net-ip)
+  "Features to load before dispatching an unknown token.")
+
+;;; Data directory
+
+(defun net-data-file (name)
+  "Return the path of NAME inside `net-data-directory', or nil.
+NAME is a plain file name, for example \"as.json\"."
+  (when net-data-directory
+    (expand-file-name name net-data-directory)))
+
+(defun net-data-available-p (file)
+  "Return non-nil when database FILE exists and is readable."
+  (and (stringp file) (file-readable-p file)))
+
+;;; Kind registry
+
+(defun net-register-kind (kind plist)
+  "Register address KIND with property list PLIST.
+PLIST keys are :label, :open, :sniff and :priority.  :open is called
+with the canonical value string.  :sniff takes a string and returns
+the canonical value string when it recognizes it."
+  (let ((cell (assq kind net-kinds)))
+    (if cell
+        (setcdr cell plist)
+      (setq net-kinds (append net-kinds (list (cons kind plist)))))))
+
+(defun net-kind-property (kind property)
+  "Return a property of KIND.
+PROPERTY selects which property of the registered address kind."
+  (plist-get (cdr (assq kind net-kinds)) property))
+
+(defun net--load-kinds ()
+  "Load every mode feature that registers an address kind."
+  (dolist (feature net--kind-features)
+    (require feature nil t)))
+
+(defun net-sniff (string)
+  "Return (KIND . VALUE) when STRING is a known network address.
+Return nil when no registered mode recognizes STRING."
+  (net--load-kinds)
+  (let ((kinds (sort (copy-sequence net-kinds)
+                     (lambda (a b)
+                       (> (or (plist-get (cdr a) :priority) 0)
+                          (or (plist-get (cdr b) :priority) 0))))))
+    (cl-loop for (kind . plist) in kinds
+             for sniffer = (plist-get plist :sniff)
+             for value = (and sniffer (funcall sniffer string))
+             when value
+             return (cons kind value))))
+
+(defun net--open (kind value)
+  "Open a KIND address VALUE in its inspect buffer."
+  (let ((opener (net-kind-property kind :open)))
+    (unless opener
+      (user-error "No network mode registered for %s" kind))
+    (funcall opener value)))
+
+;;;###autoload
+(defun net-open (kind value)
+  "Inspect a KIND address VALUE.
+KIND is one of `ip', `cidr', `mac', `asn', `domain' or `vsock'."
+  (net--open kind value))
+
+;;; Display
+
+(defun net--buffer-name (kind value)
+  "Return the inspect buffer name for KIND and VALUE."
+  (format net-buffer-name-format (symbol-name kind) value))
+
+(defun net-display (kind value mode render)
+  "Show a KIND address VALUE in a MODE buffer rendered by RENDER.
+Reuse and refresh the buffer when it already exists."
+  (let ((buffer (get-buffer-create (net--buffer-name kind value))))
+    (with-current-buffer buffer
+      (funcall mode)
+      (setq net--kind kind
+            net--value value
+            net--render-function render)
+      (net-refresh))
+    (pop-to-buffer buffer)
+    buffer))
+
+(defun net-refresh (&rest _)
+  "Render the inspected value again.
+This is the `revert-buffer-function' of every inspect buffer."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (setq net--summary nil
+          net--rdap-type nil
+          net--rdap-key nil
+          net--rdap-start nil)
+    (when net--render-function
+      (funcall net--render-function))
+    (goto-char (point-min))))
+
+(defun net--header-line ()
+  "Return the header line string of the current inspect buffer."
+  (concat " "
+          (propertize (format "%s" (or net--kind 'net)) 'face 'bold)
+          " "
+          (propertize (or net--value "") 'face 'net-value-face)
+          (if net--summary
+              (concat "  " (propertize net--summary 'face 'net-muted-face))
+            "")))
+
+(defun net-set-summary (text)
+  "Set the header line summary of the current buffer to TEXT."
+  (setq net--summary text))
+
+;;; Rendering helpers
+
+(defun net-insert-heading (title)
+  "Insert TITLE as a section heading."
+  (unless (bobp)
+    (insert "\n"))
+  (insert (propertize title 'face 'net-heading-face) "\n"))
+
+(defun net--insert-label (label)
+  "Insert LABEL in the label column.
+The column holds at least one space after a long LABEL."
+  (let* ((text (format "%s" label))
+         (padding (max 1 (- net--field-width (length text)))))
+    (insert (propertize (concat text (make-string padding ?\s))
+                        'face 'net-field-face))))
+
+(defun net-insert-field (label value &optional face)
+  "Insert LABEL and VALUE as a copyable field.
+VALUE is turned into a button that copies it to the kill ring.  FACE
+replaces `net-value-face' for the button text.  A nil VALUE shows
+\"unknown\"."
+  (net--insert-label label)
+  (if (null value)
+      (insert (propertize "unknown" 'face 'net-muted-face))
+    (let ((text (format "%s" value)))
+      (insert-text-button text
+                          'net-value text
+                          'face (or face 'net-value-face)
+                          'follow-link t
+                          'action #'net--copy-button
+                          'help-echo "Copy this value")))
+  (insert "\n"))
+
+(defun net-insert-text (label text)
+  "Insert LABEL followed by TEXT without a button.
+TEXT can span several lines."
+  (net--insert-label label)
+  (insert (propertize (format "%s" text) 'face 'net-muted-face)
+          "\n"))
+
+(defun net--insert-link-button (kind value)
+  "Insert a button that opens the KIND address VALUE."
+  (insert-text-button (format "%s" value)
+                      'net-kind kind
+                      'net-value (format "%s" value)
+                      'face 'net-value-face
+                      'follow-link t
+                      'action #'net--open-button
+                      'help-echo (format "Inspect this %s value"
+                                         (symbol-name kind))))
+
+(defun net-insert-link (label kind value)
+  "Insert a button labelled LABEL that opens the KIND address VALUE."
+  (net--insert-label label)
+  (net--insert-link-button kind value)
+  (insert "\n"))
+
+(defun net-insert-link-list (label items)
+  "Insert LABEL and a comma separated list of address buttons.
+ITEMS is a list of (KIND . VALUE) pairs.  The list wraps at the
+window edge instead of putting one button on each line."
+  (net--insert-label label)
+  (let ((first t))
+    (dolist (item items)
+      (unless first
+        (insert ", "))
+      (setq first nil)
+      (net--insert-link-button (car item) (cdr item))))
+  (insert "\n"))
+
+(defun net-insert-warning (text)
+  "Insert TEXT as a warning line."
+  (insert (propertize (format "%s\n" text) 'face 'net-warning-face)))
+
+(defun net--split-csv-line (line)
+  "Split LINE at commas into a list of fields.
+Double quotes protect commas and unquote doubled quotes.  IANA
+registries use this shape for columns that hold RFC lists."
+  (let ((fields nil)
+        (field nil)
+        (in-quotes nil)
+        (index 0)
+        (length (length line)))
+    (while (< index length)
+      (let ((char (aref line index)))
+        (cond
+         ((and in-quotes (= char ?\"))
+          (if (and (< (1+ index) length) (= (aref line (1+ index)) ?\"))
+              (progn (push ?\" field) (cl-incf index))
+            (setq in-quotes nil)))
+         ((= char ?\") (setq in-quotes t))
+         ((and (not in-quotes) (= char ?,))
+          (push (apply #'string (nreverse field)) fields)
+          (setq field nil))
+         (t (push char field))))
+      (cl-incf index))
+    (push (apply #'string (nreverse field)) fields)
+    (nreverse fields)))
+
+(defun net--read-csv-file (file)
+  "Return the records of the CSV FILE as a list of field lists.
+Each field holds its unquoted text.  A quoted field can span several
+lines, so the AS registry RDAP column stays one field.  Return nil
+when FILE is not readable."
+  (when (net-data-available-p file)
+    (with-temp-buffer
+      (insert-file-contents file)
+      (let ((records nil)
+            (fields nil)
+            (field nil)
+            (in-quotes nil)
+            (index (point-min))
+            (limit (point-max)))
+        (while (< index limit)
+          (let ((char (char-after index)))
+            (cond
+             ((and in-quotes (= char ?\"))
+              (if (and (< (1+ index) limit)
+                       (= (char-after (1+ index)) ?\"))
+                  (progn (push ?\" field) (cl-incf index))
+                (setq in-quotes nil)))
+             ((= char ?\") (setq in-quotes t))
+             ((and (not in-quotes) (= char ?\,))
+              (push (apply #'string (nreverse field)) fields)
+              (setq field nil))
+             ((and (not in-quotes) (= char ?\n))
+              (push (apply #'string (nreverse field)) fields)
+              (setq field nil
+                    fields (nreverse fields))
+              (unless (seq-every-p #'string-empty-p fields)
+                (push fields records))
+              (setq fields nil))
+             ((= char ?\r) nil)
+             (t (push char field))))
+          (cl-incf index))
+        (when (or field fields)
+          (push (apply #'string (nreverse field)) fields)
+          (setq fields (nreverse fields))
+          (unless (seq-every-p #'string-empty-p fields)
+            (push fields records)))
+        (nreverse records)))))
+
+(defun net--copy-button (button)
+  "Copy the value of BUTTON to the kill ring."
+  (let ((value (button-get button 'net-value)))
+    (kill-new value)
+    (message "Copied: %s" value)))
+
+(defun net--open-button (button)
+  "Open the value of BUTTON in its own inspect buffer."
+  (net--open (button-get button 'net-kind)
+             (button-get button 'net-value)))
+
+;;;###autoload
+(defun net-copy-value ()
+  "Copy the inspected value to the kill ring."
+  (interactive)
+  (unless net--value
+    (user-error "This buffer has no inspected value"))
+  (kill-new net--value)
+  (message "Copied: %s" net--value))
+
+;;; Bookmarks
+
+(defun net--bookmark-make-record ()
+  "Return a bookmark record for the current inspect buffer."
+  (list (cons 'handler #'net--bookmark-jump)
+        (cons 'kind net--kind)
+        (cons 'value net--value)))
+
+(defun net--bookmark-jump (bookmark)
+  "Jump to the address stored in BOOKMARK."
+  (let ((kind (alist-get 'kind bookmark))
+        (value (alist-get 'value bookmark)))
+    (net--open kind value)))
+
+(put 'net--bookmark-jump 'bookmark-handler-type "Network address")
+
+;;; RDAP
+
+(defun net--rdap-url ()
+  "Return the RDAP URL of the current buffer, or nil."
+  (when (and net--rdap-type net--rdap-key)
+    (format "%s/%s/%s"
+            (string-trim-right net-rdap-bootstrap-url "/")
+            net--rdap-type
+            net--rdap-key)))
+
+(defun net-rdap-available-p ()
+  "Return non-nil when the current buffer has an RDAP identity."
+  (and net--rdap-type net--rdap-key t))
+
+;;;###autoload
+(defun net-rdap ()
+  "Fetch and render RDAP data for the current inspect buffer.
+The command never runs automatically.  It contacts the network only
+when invoked."
+  (interactive)
+  (unless (net-rdap-available-p)
+    (user-error "This buffer has no RDAP lookup"))
+  (let ((url (net--rdap-url))
+        (target (current-buffer)))
+    (when (net--rdap-in-flight-p target)
+      (user-error "RDAP lookup already in flight"))
+    (setq-local net--rdap-in-flight t)
+    (message "RDAP: %s" url)
+    (url-retrieve
+     url
+     (lambda (status)
+       (net--rdap-callback target status))
+     nil t t)))
+
+(defvar-local net--rdap-in-flight nil
+  "Non-nil while an RDAP request is in flight for this buffer.")
+
+(defun net--rdap-in-flight-p (buffer)
+  "Return non-nil when BUFFER has an RDAP request in flight."
+  (and (buffer-live-p buffer)
+       (buffer-local-value 'net--rdap-in-flight buffer)))
+
+(defun net--rdap-callback (buffer status)
+  "Render the RDAP response in BUFFER.
+STATUS is the `url-retrieve' status plist."
+  (let ((data nil)
+        (error-message (plist-get status :error))
+        (response-buffer (current-buffer)))
+    (unless error-message
+      (condition-case err
+          (with-current-buffer response-buffer
+            (goto-char (or (bound-and-true-p url-http-end-of-headers) (point-min)))
+            (setq data (json-parse-buffer :object-type 'alist
+                                          :array-type 'list
+                                          :null-object nil
+                                          :false-object nil)))
+        (error (setq error-message err))))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (setq net--rdap-in-flight nil)
+        (let ((inhibit-read-only t))
+          ;; Replace an earlier RDAP section instead of stacking another.
+          (when (and net--rdap-start (marker-position net--rdap-start))
+            (delete-region net--rdap-start (point-max)))
+          (goto-char (point-max))
+          (setq net--rdap-start (copy-marker (point-max)))
+          (net-insert-heading "RDAP")
+          (if error-message
+              (net-insert-warning (format "Lookup failed: %s" error-message))
+            (net--rdap-render data))
+          (net-insert-field "Source" (net--rdap-url)))))))
+
+(defun net--rdap-entity-name (entity)
+  "Return the display name of the RDAP ENTITY alist."
+  (or (alist-get 'handle entity)
+      (let ((vcard (alist-get 'vcardArray entity)))
+        (when vcard
+          (seq-some (lambda (entry)
+                      (when (and (listp entry)
+                                 (equal (car entry) "fn")
+                                 (nth 3 entry))
+                        (nth 3 entry)))
+                    (nth 1 vcard))))))
+
+(defun net--rdap-render (data)
+  "Render the RDAP response alist DATA in the current buffer."
+  (if (not (listp data))
+      (net-insert-warning "RDAP returned no JSON object")
+    (dolist (key '((handle . "Handle")
+                   (name . "Name")
+                   (type . "Type")
+                   (country . "Country")
+                   (ipVersion . "IP version")
+                   (startAddress . "Start address")
+                   (endAddress . "End address")))
+      (let ((value (alist-get (car key) data)))
+        (when value
+          (net-insert-field (cdr key) value))))
+    (let ((status (alist-get 'status data)))
+      (when status
+        (net-insert-field "Status" (mapconcat #'identity status ", "))))
+    (let ((events (alist-get 'events data)))
+      (when events
+        (dolist (event events)
+          (when-let* ((action (alist-get 'eventAction event))
+                      (date (alist-get 'eventDate event)))
+            (net-insert-field (capitalize action) date)))))
+    (let ((entities (alist-get 'entities data)))
+      (when entities
+        (net-insert-heading "RDAP Entities")
+        (dolist (entity entities)
+          (let ((roles (mapconcat #'identity (alist-get 'roles entity) ", ")))
+            (net-insert-field (if (string-empty-p roles) "Entity" roles)
+                              (net--rdap-entity-name entity))))))
+    (let ((remarks (alist-get 'remarks data)))
+      (when remarks
+        (net-insert-heading "RDAP Remarks")
+        (dolist (remark remarks)
+          (dolist (line (alist-get 'description remark))
+            (net-insert-text "" line)))))))
+
+;;; Base mode
+
+(defvar-keymap net-mode-map
+  :doc "Keymap for `net-mode' and its derived modes."
+  :parent special-mode-map
+  "RET" #'push-button
+  "w" #'net-copy-value
+  "b" #'net-rdap
+  "i" #'net-inspect)
+
+(define-derived-mode net-mode special-mode "Net"
+  "Base major mode for inspecting a network address.
+Derived modes set `net--render-function' and render their fields with
+`net-insert-heading', `net-insert-field' and `net-insert-link'.
+
+\\{net-mode-map}"
+  :group 'net
+  (setq-local truncate-lines t)
+  (setq-local revert-buffer-function #'net-refresh)
+  (setq-local header-line-format '(:eval (net--header-line)))
+  (setq-local bookmark-make-record-function #'net--bookmark-make-record)
+  (setq-local default-directory temporary-file-directory))
+
+;;; Dispatcher and thing-at-point
+
+(defconst net--trailing-punctuation ".:/_-"
+  "Characters that can follow an address in running text.")
+
+(defun net--thing-bounds (chars predicate)
+  "Return the bounds of a CHARS token around point that satisfies PREDICATE.
+CHARS is a `skip-chars' set that makes up a token.  Prefer the token
+without its trailing punctuation, so an address at the end of a
+sentence still matches.  Fall back to the raw token."
+  (save-excursion
+    (skip-chars-forward chars)
+    (let ((end (point)))
+      (skip-chars-backward chars)
+      (let* ((beg (point))
+             (raw (and (< beg end)
+                       (buffer-substring-no-properties beg end)))
+             (trimmed (and raw
+                           (string-trim-right
+                            raw (concat "[" net--trailing-punctuation "]+"))))
+             (stop (+ beg (length (or trimmed "")))))
+        (cond
+         ((and trimmed (not (string-empty-p trimmed))
+               (> stop beg)
+               (funcall predicate trimmed))
+          (cons beg stop))
+         ((and raw (funcall predicate raw))
+          (cons beg end)))))))
+
+(defun net--thing-at-point ()
+  "Return the network-like token at point, or nil."
+  (when-let* ((bounds (bounds-of-thing-at-point 'net-address)))
+    (buffer-substring-no-properties (car bounds) (cdr bounds))))
+
+(defun net--thing-sniff-p (string)
+  "Return non-nil when STRING is a known network address."
+  (and (net-sniff string) t))
+
+(put 'net-address 'bounds-of-thing-at-point
+     (lambda ()
+       (net--thing-bounds "0-9A-Za-z:./%_-" #'net--thing-sniff-p)))
+(put 'net-address 'thing-at-point
+     (lambda ()
+       (when-let* ((bounds (bounds-of-thing-at-point 'net-address)))
+         (buffer-substring-no-properties (car bounds) (cdr bounds)))))
+
+;;;###autoload
+(defun net-inspect (&optional string)
+  "Inspect the network address at point or STRING.
+The dispatcher asks each registered mode in turn, so it recognizes
+IP addresses, CIDR prefixes, MAC addresses, AS numbers, domain names
+and AF_VSOCK addresses."
+  (interactive (list (when current-prefix-arg
+                       (read-string "Network address: "))))
+  (let* ((input (or string (net--thing-at-point)))
+         (kind (and input (net-sniff input))))
+    (unless input
+      (user-error "No network address at point"))
+    (unless kind
+      (user-error "No network mode recognizes %s" input))
+    (net--open (car kind) (cdr kind))))
+
+(provide 'net-mode)
+;;; net-mode.el ends here

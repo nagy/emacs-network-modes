@@ -1,0 +1,196 @@
+#+title:    emacs-network-modes - network address modes for Emacs
+#+author:   Daniel Nagy
+#+language: en
+
+Read-only Emacs major modes for inspecting network addresses.
+
+Each mode displays one address of its kind, parses it locally, and adds
+whatever the pinned offline databases know about it.  Every buffer is a
+plain `special-mode' derivative: no network access happens when a buffer
+opens.
+
+* Modes
+
+| Mode              | Example input        | What it shows                                        |
+|-------------------+----------------------+------------------------------------------------------|
+| =net-ip-mode=     | =192.0.2.1=          | integer, hex, binary, class, special-purpose block, reverse DNS, embedded transition addresses, GeoIP country |
+| =net-cidr-mode=   | =10.0.0.0/8=         | network, last address, netmask, wildcard, host counts, broadcast, reverse zone, IANA registry flags |
+| =net-mac-mode=    | =aa:bb:cc:dd:ee:ff=  | notations, integer, I/G and U/L bits, known multicast names, IEEE vendor, registry and organization address, derived IPv6 link-local |
+| =net-asn-mode=    | =AS13335= or =1.10=  | asplain, ASDOT, 16/32-bit class, reservation status, IANA block, ipverse metadata and routing statistics |
+| =net-domain-mode= | =www.example.co.uk=  | labels, Punycode, TLD, public suffix, registrable domain, hostname validity |
+| =net-vsock-mode=  | =2:22=               | CID, port, reserved CID names, `sockaddr_vm` layout, IANA services with the same port |
+
+* Usage
+
+#+begin_src elisp
+(require 'net-mode)
+#+end_src
+
+One dispatcher finds the right mode for the token at point:
+
+- =M-x net-inspect= -- inspect the address at point, or prompt with
+  =C-u=
+- =M-x net-ip-inspect=, =net-cidr-inspect=, =net-mac-inspect=,
+  =net-asn-inspect=, =net-domain-inspect=, =net-vsock-inspect= --
+  inspect one value directly
+- =M-x net-open= -- open a value of a known kind from Elisp
+
+The dispatcher accepts CIDR prefixes, MAC addresses (colon, hyphen,
+Cisco dot form), =AS= numbers, including ASDOT after the =AS= prefix,
+IPv4 and IPv6 addresses, domain names and =CID:PORT= vsock addresses.
+A trailing sentence period does not hide the address.
+
+** Key bindings
+
+| Key   | Command                        | Description                          |
+|-------+--------------------------------+--------------------------------------|
+| =g=   | =revert-buffer=                | render the value again               |
+| =q=   | =quit-window=                  | bury the inspect buffer              |
+| =w=   | =net-copy-value=               | copy the inspected value             |
+| =RET= | =push-button=                  | follow a field or address button     |
+| =TAB= | =forward-button=               | move to the next button              |
+| =b=   | =net-rdap=                     | fetch RDAP data for this value       |
+| =i=   | =net-inspect=                  | inspect the address at point         |
+
+Every field is a button: =RET= or the button's default action copies
+its value.  Related addresses (host prefix, parent prefix, embedded
+IPv4, provider AS, registrable domain) are buttons that open their own
+buffer.  Inspecting the same value twice reuses the same buffer.
+
+** Buffers
+
+Buffer names follow =*net-KIND VALUE*=.  The header line repeats the
+kind, the value and a one-line classification.  =C-x r m= bookmarks an
+address, because the buffer installs a bookmark handler.
+
+** RDAP
+
+=net-rdap= (=b=) fetches =https://rdap.org/TYPE/KEY= asynchronously and
+renders the answer in a section at the end of the buffer.  A second
+lookup replaces that section.  The command only runs when you invoke
+it.  Opening, reverting or rendering a buffer never touches the network.
+
+* Databases
+
+Every mode works offline and degrades gracefully when a database is
+missing: it still parses the address and reports the missing source.
+
+| Database                                | Mode            | Option                        | License     | Source |
+|-----------------------------------------+-----------------+-------------------------------+-------------+--------|
+| IANA IPv4/IPv6 special-purpose registry | =net-ip-mode=, =net-cidr-mode= | =net-ip-registry-file=, =-v6= | IANA public data | https://www.iana.org/assignments/iana-ipv4-special-registry/ |
+| IANA 16/32-bit AS numbers               | =net-asn-mode=  | =net-asn-registry-file=, =-v2=  | IANA public data | https://www.iana.org/assignments/as-numbers/ |
+| IANA service names and port numbers     | =net-vsock-mode= | =net-vsock-service-file=       | IANA public data | https://www.iana.org/assignments/service-names-port-numbers/ |
+| Public Suffix List                      | =net-domain-mode= | =net-domain-psl-file=          | MPL 2.0     | https://publicsuffix.org/list/public_suffix_list.dat |
+| ipverse as-metadata (JSON)              | =net-asn-mode=  | =net-asn-database-file=        | CC0 1.0     | https://github.com/ipverse/as-metadata |
+| ip-location-db user-country (CSV)       | =net-ip-mode=   | =net-geo-database-file=, =-v6=  | PDDL 1.0    | https://github.com/sapics/ip-location-db |
+| IEEE MAC address registries             | =net-mac-mode=  | =net-mac-registry-directory=   | IEEE registry terms | https://standards-oui.ieee.org/ |
+| Wireshark manuf (optional)              | =net-mac-mode=  | =net-mac-manuf-file=           | Wireshark licence | https://www.wireshark.org/download/automated/data/manuf |
+
+The IEEE registries ship with the package: five CSVs split by
+assignment size, each row naming its registry (MA-L, MA-M, MA-S, IAB or
+CID).  They replace the former maclookup.app JSON source and add the
+organization address.  Wireshark's =manuf= file stays optional and adds
+short vendor names.
+
+** One directory for everything
+
+=net-data-directory= is the single knob.  Each option above defaults to
+=net-data-file NAME= for the file names below, so setting the directory
+is enough when the files carry their upstream names.  The old names
+=net-cidr-registry-file= and =net-cidr-registry-file-v6= alias the
+=net-ip= options of the same name.
+
+#+begin_src text
+as.json
+as-numbers-1.csv
+as-numbers-2.csv
+cid.csv
+iab.csv
+iana-ipv4-special-registry.csv
+iana-ipv6-special-registry.csv
+mam.csv
+oui.csv
+oui36.csv
+public_suffix_list.dat
+service-names-port-numbers.csv
+user-country-ipv4.csv
+user-country-ipv6.csv
+#+end_src
+
+* Nix
+
+#+begin_src sh
+nix build                  # build the package
+nix flake check            # package, ERT suite, package-lint, checkdoc, treefmt
+nix develop                # Emacs with package-lint and embark
+nix flake update           # refresh every pinned database
+#+end_src
+
+=flake.nix= pins the databases as plain file inputs; =flake.lock= holds
+their hashes.  The flake collects them in one derivation and substitutes
+=net-data-directory= with its store path, so the installed package finds
+every database without configuration.  The Public Suffix List comes from
+nixpkgs (=publicsuffix-list=).
+
+Upstream licences of the pinned data: IANA registries are public data,
+as-metadata is CC0 1.0, ip-location-db user-country is PDDL 1.0, the
+Public Suffix List is MPL 2.0, and the IEEE registries come from the
+IEEE registration authority.  None of them is copied into this
+repository.
+
+* Integrations
+
+Three opt-in modules sit beside the modes:
+
+- =ol-net.el= -- Org link types =net-ip:=, =net-cidr:=, =net-mac:=,
+  =net-asn:=, =net-domain:=, =net-vsock:= and the dispatching =net:=
+  type
+- =embark-net.el= -- Embark target =net-address= with inspect and copy
+  actions, enabled with =embark-net-mode=
+- =net-xref.el= -- xref backend, so =xref-find-definitions= on any
+  address opens its inspect buffer
+
+They are loaded on request:
+
+#+begin_src elisp
+(with-eval-after-load 'org (require 'ol-net))
+(with-eval-after-load 'embark
+  (require 'embark-net)
+  (embark-net-mode 1))
+(require 'net-xref)
+#+end_src
+
+* Testing
+
+#+begin_src sh
+emacs -Q --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
+#+end_src
+
+The suite covers parsers, formatters, CIDR arithmetic, Punycode test
+vectors, Public Suffix List matching (plain, wildcard, exception and
+IDN rules), the vendor, registry, metadata and country lookups with
+temporary files, buffer rendering, RDAP placement, bookmarks and the
+integration modules.
+
+* Conventions
+
+- Lines stay under 80 columns.
+- Only the interactive commands and the renderers have side effects;
+  parsers and formatters are pure.
+- Every database reader caches on (file, modification time, size), so
+  editing a file invalidates the cache without a restart.
+- Unknown values render as =unknown= instead of signalling.
+- =net-rdap= is the only code path that opens a network connection.
+
+* Ideas not implemented
+
+- RPKI/ROA validation state per prefix
+- PeeringDB and IXP membership for an AS
+- DNSBL lookups through the DNS resolver
+- Full IDNA normalization (UTS #46) for domain names
+- MMDB input for GeoIP instead of the CSV ranges
+- Port-based mode for IANA service names
+
+* License
+
+AGPL-3.0-or-later.  See =LICENSE=.
