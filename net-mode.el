@@ -95,6 +95,14 @@ argument is the canonical address string."
   :type 'string
   :group 'net)
 
+(defcustom net-rdap-timeout 30
+  "Seconds to wait for an RDAP answer before the lookup times out.
+The value covers the whole request.  A timeout clears the in-flight
+flag, so the next lookup can start, and renders a warning line.  A
+late answer still replaces that line."
+  :type 'natnum
+  :group 'net)
+
 (defface net-heading-face
   '((t :inherit outline-1 :weight bold))
   "Face for section headings in network inspect buffers."
@@ -145,6 +153,20 @@ The value is one of \"ip\", \"domain\" or \"autnum\".")
 (defvar-local net--rdap-start nil
   "Marker at the start of the rendered RDAP section, or nil.
 The next lookup replaces that section instead of appending another.")
+
+(defvar-local net--rdap-in-flight nil
+  "Non-nil while an RDAP request is in flight for this buffer.")
+
+(defvar-local net--rdap-timer nil
+  "Timer that abandons the RDAP request of this buffer, or nil.")
+
+(defvar-local net--rdap-request-buffer nil
+  "Buffer that holds the response of the RDAP request, or nil.")
+
+(defvar-local net--headings nil
+  "Section headings of this buffer, newest first.
+Each element is (TITLE . MARKER).  The renderers fill it through
+`net-insert-heading', and Imenu reads it.")
 
 (defvar net-kinds nil
   "Alist of registered network address kinds.
@@ -244,7 +266,8 @@ This is the `revert-buffer-function' of every inspect buffer."
     (setq net--summary nil
           net--rdap-type nil
           net--rdap-key nil
-          net--rdap-start nil)
+          net--rdap-start nil
+          net--headings nil)
     (when net--render-function
       (funcall net--render-function))
     (goto-char (point-min))))
@@ -266,10 +289,18 @@ This is the `revert-buffer-function' of every inspect buffer."
 ;;; Rendering helpers
 
 (defun net-insert-heading (title)
-  "Insert TITLE as a section heading."
+  "Insert TITLE as a section heading.
+Record the heading for Imenu."
   (unless (bobp)
     (insert "\n"))
-  (insert (propertize title 'face 'net-heading-face) "\n"))
+  (let ((start (point)))
+    (insert (propertize title 'face 'net-heading-face) "\n")
+    (push (cons title (copy-marker start)) net--headings)))
+
+(defun net--imenu-index ()
+  "Return the section headings of the current buffer for Imenu."
+  (mapcar (lambda (entry) (cons (car entry) (cdr entry)))
+          (reverse net--headings)))
 
 (defun net--insert-label (label)
   "Insert LABEL in the label column.
@@ -469,48 +500,99 @@ when invoked."
       (user-error "RDAP lookup already in flight"))
     (setq-local net--rdap-in-flight t)
     (message "RDAP: %s" url)
-    (url-retrieve
-     url
-     (lambda (status)
-       (net--rdap-callback target status))
-     nil t t)))
-
-(defvar-local net--rdap-in-flight nil
-  "Non-nil while an RDAP request is in flight for this buffer.")
+    (setq-local net--rdap-request-buffer
+                (url-retrieve
+                 url
+                 (lambda (status)
+                   (net--rdap-callback target status))
+                 nil t t))
+    (setq-local net--rdap-timer
+                (run-with-timer net-rdap-timeout nil
+                                #'net--rdap-abandon target))))
 
 (defun net--rdap-in-flight-p (buffer)
   "Return non-nil when BUFFER has an RDAP request in flight."
   (and (buffer-live-p buffer)
        (buffer-local-value 'net--rdap-in-flight buffer)))
 
+(defun net--rdap-release-buffer (response-buffer target)
+  "Hand RESPONSE-BUFFER to the URL garbage collector.
+TARGET is the inspect buffer, which the caller must keep."
+  (when (and (buffer-live-p response-buffer)
+             (not (eq response-buffer target)))
+    (url-mark-buffer-as-dead response-buffer)))
+
+(defun net--rdap-begin-section ()
+  "Start a new RDAP section at the end of the buffer.
+Delete an earlier section first.  Return the marker at its start."
+  (let ((inhibit-read-only t))
+    (when (and net--rdap-start (marker-position net--rdap-start))
+      (delete-region net--rdap-start (point-max)))
+    (goto-char (point-max))
+    (setq net--rdap-start (copy-marker (point-max)))
+    (net-insert-heading "RDAP")
+    net--rdap-start))
+
+(defun net--rdap-finish (buffer)
+  "Clear the RDAP state of BUFFER.
+Return non-nil when BUFFER still waited for an answer."
+  (with-current-buffer buffer
+    (when (timerp net--rdap-timer)
+      (cancel-timer net--rdap-timer))
+    (setq net--rdap-timer nil
+          net--rdap-request-buffer nil)
+    (prog1 net--rdap-in-flight
+      (setq net--rdap-in-flight nil))))
+
+(defun net--rdap-abandon (buffer)
+  "Stop waiting for the RDAP answer of BUFFER.
+This runs `net-rdap-timeout' seconds after `net-rdap'.  A late answer
+still replaces the warning line."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (net--rdap-finish buffer)
+        (let ((inhibit-read-only t))
+          (net--rdap-begin-section)
+          (net-insert-warning
+           (format "Lookup timed out after %d seconds" net-rdap-timeout))
+          (net-insert-field "Source" (net--rdap-url)))))))
+
 (defun net--rdap-callback (buffer status)
   "Render the RDAP response in BUFFER.
 STATUS is the `url-retrieve' status plist."
   (let ((data nil)
-        (error-message (plist-get status :error))
+        (status-code nil)
+        (network-error (plist-get status :error))
+        (parse-error nil)
         (response-buffer (current-buffer)))
-    (unless error-message
+    (unless network-error
       (condition-case err
           (with-current-buffer response-buffer
-            (goto-char (or (bound-and-true-p url-http-end-of-headers) (point-min)))
+            (setq status-code (bound-and-true-p url-http-response-status))
+            (goto-char (or (bound-and-true-p url-http-end-of-headers)
+                           (point-min)))
             (setq data (json-parse-buffer :object-type 'alist
                                           :array-type 'list
                                           :null-object nil
                                           :false-object nil)))
-        (error (setq error-message err))))
+        (error (setq parse-error err))))
+    (net--rdap-release-buffer response-buffer buffer)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (setq net--rdap-in-flight nil)
+        (net--rdap-finish buffer)
         (let ((inhibit-read-only t))
-          ;; Replace an earlier RDAP section instead of stacking another.
-          (when (and net--rdap-start (marker-position net--rdap-start))
-            (delete-region net--rdap-start (point-max)))
-          (goto-char (point-max))
-          (setq net--rdap-start (copy-marker (point-max)))
-          (net-insert-heading "RDAP")
-          (if error-message
-              (net-insert-warning (format "Lookup failed: %s" error-message))
-            (net--rdap-render data))
+          (net--rdap-begin-section)
+          (cond
+           (network-error
+            (net-insert-warning
+             (format "Lookup failed: %s" network-error)))
+           ((and (null data) status-code (>= status-code 400))
+            (net-insert-warning
+             (format "Lookup failed: HTTP %d" status-code)))
+           ((null data)
+            (net-insert-warning
+             (format "Lookup failed: %s" (or parse-error "empty answer"))))
+           (t (net--rdap-render data)))
           (net-insert-field "Source" (net--rdap-url)))))))
 
 (defun net--rdap-entity-name (entity)
@@ -525,10 +607,23 @@ STATUS is the `url-retrieve' status plist."
                         (nth 3 entry)))
                     (nth 1 vcard))))))
 
+(defun net--rdap-render-error (data)
+  "Render the RDAP error object DATA."
+  (net-insert-warning
+   (format "RDAP error %s: %s"
+           (or (alist-get 'errorCode data) "unknown")
+           (or (alist-get 'title data) "no title")))
+  (dolist (line (alist-get 'description data))
+    (net-insert-text "" line)))
+
 (defun net--rdap-render (data)
   "Render the RDAP response alist DATA in the current buffer."
-  (if (not (listp data))
-      (net-insert-warning "RDAP returned no JSON object")
+  (cond
+   ((not (listp data))
+    (net-insert-warning "RDAP returned no JSON object"))
+   ((alist-get 'errorCode data)
+    (net--rdap-render-error data))
+   (t
     (dolist (key '((handle . "Handle")
                    (name . "Name")
                    (type . "Type")
@@ -560,7 +655,11 @@ STATUS is the `url-retrieve' status plist."
         (net-insert-heading "RDAP Remarks")
         (dolist (remark remarks)
           (dolist (line (alist-get 'description remark))
-            (net-insert-text "" line)))))))
+            (when (stringp line)
+              (let ((start (point))
+                    (fill-column 78))
+                (net-insert-text "" line)
+                (fill-region start (point)))))))))))
 
 ;;; Base mode
 
@@ -568,6 +667,8 @@ STATUS is the `url-retrieve' status plist."
   :doc "Keymap for `net-mode' and its derived modes."
   :parent special-mode-map
   "RET" #'push-button
+  "TAB" #'forward-button
+  "<backtab>" #'backward-button
   "w" #'net-copy-value
   "b" #'net-rdap
   "i" #'net-inspect)
@@ -582,6 +683,7 @@ Derived modes set `net--render-function' and render their fields with
   (setq-local truncate-lines t)
   (setq-local revert-buffer-function #'net-refresh)
   (setq-local header-line-format '(:eval (net--header-line)))
+  (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
   (setq-local default-directory temporary-file-directory))
 
@@ -590,11 +692,37 @@ Derived modes set `net--render-function' and render their fields with
 (defconst net--trailing-punctuation ".:/_-"
   "Characters that can follow an address in running text.")
 
+(defun net--thing-candidates (text)
+  "Return the parts of TEXT that can name a network address.
+Each element is (OFFSET . STRING), where OFFSET counts characters
+from the start of TEXT.  An address can sit behind a URL scheme and
+before a path or a query, so the result holds TEXT first, then the
+part after the scheme, then the part before the first path or query
+character, and last the host without a port."
+  (let ((candidates (list (cons 0 text)))
+        (offset 0)
+        (rest text))
+    (when (string-match "\\`[A-Za-z][A-Za-z0-9+.-]*://" rest)
+      (setq offset (match-end 0)
+            rest (substring rest offset))
+      (push (cons offset rest) candidates))
+    (let ((split (string-match "[/?#]" rest)))
+      (when (and split (> split 0))
+        (setq rest (substring rest 0 split))
+        (push (cons offset rest) candidates)))
+    ;; A port after a URL scheme is not part of the host, but a bare
+    ;; "CID:PORT" pair stays whole because no scheme matched.
+    (when (and (> offset 0)
+               (string-match "\\`\\(.+\\):[0-9]+\\'" rest))
+      (push (cons offset (match-string 1 rest)) candidates))
+    (nreverse candidates)))
+
 (defun net--thing-bounds (chars predicate)
   "Return the bounds of a CHARS token around point that satisfies PREDICATE.
 CHARS is a `skip-chars' set that makes up a token.  Prefer the token
 without its trailing punctuation, so an address at the end of a
-sentence still matches.  Fall back to the raw token."
+sentence still matches, and look inside a URL for its host.  Fall
+back to the raw token."
   (save-excursion
     (skip-chars-forward chars)
     (let ((end (point)))
@@ -604,15 +732,17 @@ sentence still matches.  Fall back to the raw token."
                        (buffer-substring-no-properties beg end)))
              (trimmed (and raw
                            (string-trim-right
-                            raw (concat "[" net--trailing-punctuation "]+"))))
-             (stop (+ beg (length (or trimmed "")))))
-        (cond
-         ((and trimmed (not (string-empty-p trimmed))
-               (> stop beg)
-               (funcall predicate trimmed))
-          (cons beg stop))
-         ((and raw (funcall predicate raw))
-          (cons beg end)))))))
+                            raw (concat "[" net--trailing-punctuation "]+")))))
+        (or (and trimmed
+                 (not (string-empty-p trimmed))
+                 (seq-some (lambda (candidate)
+                             (let ((start (+ beg (car candidate)))
+                                   (string (cdr candidate)))
+                               (when (and (not (string-empty-p string))
+                                          (funcall predicate string))
+                                 (cons start (+ start (length string))))))
+                           (net--thing-candidates trimmed)))
+            (and raw (funcall predicate raw) (cons beg end)))))))
 
 (defun net--thing-at-point ()
   "Return the network-like token at point, or nil."
@@ -631,14 +761,20 @@ sentence still matches.  Fall back to the raw token."
        (when-let* ((bounds (bounds-of-thing-at-point 'net-address)))
          (buffer-substring-no-properties (car bounds) (cdr bounds)))))
 
+(defvar net-inspect-history nil
+  "History of values read by `net-inspect'.")
+
 ;;;###autoload
 (defun net-inspect (&optional string)
   "Inspect the network address at point or STRING.
 The dispatcher asks each registered mode in turn, so it recognizes
 IP addresses, CIDR prefixes, MAC addresses, AS numbers, domain names
 and AF_VSOCK addresses."
-  (interactive (list (when current-prefix-arg
-                       (read-string "Network address: "))))
+  (interactive
+   (list (when current-prefix-arg
+           (read-string "Network address: "
+                        (thing-at-point 'net-address)
+                        'net-inspect-history))))
   (let* ((input (or string (net--thing-at-point)))
          (kind (and input (net-sniff input))))
     (unless input

@@ -204,6 +204,57 @@ the start of the buffer."
     (should (string-match-p "second" (buffer-string)))
     (should-not (string-match-p "first" (buffer-string)))))
 
+(ert-deftest net-tests-rdap-render-error ()
+  "An RDAP error object renders its code, title and description."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (let ((inhibit-read-only t))
+      (net--rdap-begin-section)
+      (net--rdap-render '((errorCode . 404)
+                          (title . "Not Found")
+                          (description . ("no such object")))))
+    (should (string-match-p "RDAP error 404" (buffer-string)))
+    (should (string-match-p "Not Found" (buffer-string)))
+    (should (string-match-p "no such object" (buffer-string)))
+    (should-not (string-match-p "unknown" (buffer-string)))))
+
+(ert-deftest net-tests-rdap-callback-http-error ()
+  "An HTTP error without a JSON body renders the status code."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (let ((target (current-buffer))
+          (response (generate-new-buffer " *http test*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer response
+              (insert "HTTP/1.1 500 Oops\n\n")
+              (setq-local url-http-end-of-headers (point-max))
+              (setq-local url-http-response-status 500)
+              (net--rdap-callback target '()))
+            (should (string-match-p "HTTP 500" (buffer-string))))
+        (when (buffer-live-p response)
+          (kill-buffer response))))))
+
+(ert-deftest net-tests-rdap-timeout ()
+  "A timeout clears the in-flight flag and renders a warning."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (setq-local net--rdap-in-flight t)
+    (net--rdap-abandon (current-buffer))
+    (should-not net--rdap-in-flight)
+    (should (string-match-p "timed out" (buffer-string)))
+    (should (string-match-p "RDAP" (buffer-string)))
+    (should net--rdap-start)))
+
+(ert-deftest net-tests-imenu-index ()
+  "The rendered headings become an Imenu index."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (let ((index (net--imenu-index)))
+      (should (equal (car (car index)) "Address"))
+      (should (member "Classification" (mapcar #'car index)))
+      (dolist (entry index)
+        (should (markerp (cdr entry)))
+        (should (string-match-p
+                 (regexp-quote (car entry))
+                 (buffer-substring (cdr entry) (point-max))))))))
+
 (ert-deftest net-tests-thing-at-point ()
   "The generic thing finds addresses in ordinary buffers."
   (with-temp-buffer
@@ -212,6 +263,18 @@ the start of the buffer."
     (should (equal (thing-at-point 'net-address t) "10.0.0.0/8"))
     (goto-char 25)
     (should (equal (thing-at-point 'net-address t) "192.0.2.1"))))
+
+(ert-deftest net-tests-thing-inside-url ()
+  "The thing finds a host or an address inside a URL."
+  (dolist (entry '(("http://1.2.3.4/x" . "1.2.3.4")
+                   ("https://example.com/a?b=c" . "example.com")
+                   ("https://example.org:8443/p" . "example.org")
+                   ("http://[2001:db8::1]/x" . "2001:db8::1")))
+    (with-temp-buffer
+      (insert (car entry))
+      (goto-char (1+ (string-match (regexp-quote (cdr entry))
+                                   (car entry))))
+      (should (equal (thing-at-point 'net-address t) (cdr entry))))))
 
 (ert-deftest net-tests-thing-trailing-punctuation ()
   "Trailing punctuation does not hide an address."
@@ -281,6 +344,20 @@ the start of the buffer."
   (should (equal (net-ip-format (logior (ash 1 112) 1) 6) "1::1"))
   (should (equal (net-ip-format (1- (ash 1 128)) 6)
                  "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")))
+
+(ert-deftest net-tests-canonical-round-trip ()
+  "A canonical string parses back to the same kind and value."
+  (dolist (text '("0.0.0.0" "192.0.2.1" "255.255.255.255"
+                  "::" "::1" "2001:db8::1" "fe80::1%eth0"
+                  "::ffff:1.2.3.4" "AS13335" "AS1.10" "10.0.0.0/8"
+                  "192.0.2.0/24" "0.0.0.0/0" "2001:db8::/32"
+                  "aa:bb:cc:dd:ee:ff" "01:00:5e:00:00:01"))
+    (let* ((first (net-sniff text))
+           (canonical (cdr first))
+           (again (net-sniff canonical)))
+      (should first)
+      (should (equal (car again) (car first)))
+      (should (equal (cdr again) canonical)))))
 
 (ert-deftest net-tests-ipv6-single-zero-group ()
   "A single zero group stays uncompressed."

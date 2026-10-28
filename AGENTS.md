@@ -30,7 +30,7 @@ network, and it runs only when invoked.
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (63 tests)                                                    |
+| `net-tests.el`      | ERT suite (69 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
 | `README.org`        | User documentation                                                      |
@@ -72,7 +72,9 @@ the lowest:
 `net-inspect` runs the dispatcher on the token at point (the
 `net-address` thing type) or on a prompted string.  `net--thing-bounds`
 drops trailing punctuation before the sniff, so an address followed by
-a sentence period still resolves.
+a sentence period still resolves.  `net--thing-candidates` also looks
+inside a URL, so the host of `https://example.org:8443/path` resolves
+to `example.org`.
 
 ### Buffers and rendering
 
@@ -88,6 +90,13 @@ use only the helpers in `net-mode.el`:
 - `net-insert-text` (non-button, can span lines)
 - `net-insert-warning`
 - `net-set-summary` (header line classification)
+
+`net-insert-heading` records each heading in the buffer-local
+`net--headings` list, and `net--imenu-index` turns that list into the
+Imenu index.  `net-mode-map` binds `TAB` and `<backtab>` to
+`forward-button` and `backward-button`, so buttons work without a mouse
+or `button-mode`, which would remove the buttons when the user turns it
+off.
 
 A mode sets `net--rdap-type` and `net--rdap-key` at the end of its
 renderer when the value has an RDAP identity.
@@ -145,10 +154,21 @@ Punycode alias for every IDN rule.
 `net-rdap` calls `url-retrieve` and renders a section at the end of the
 current buffer in the callback.  A second lookup replaces that section
 instead of appending another; a buffer-local `net--rdap-start` marker
-delimits it.  The callback parses the RDAP JSON and renders handle,
-name, type, country, addresses, status, events, entities and remarks.
+delimits it.  `net--rdap-begin-section` performs the replacement, so
+the timeout path and the callback share it.  The callback parses the
+RDAP JSON and renders handle, name, type, country, addresses, status,
+events, entities and remarks.  An answer with `errorCode` renders the
+code, the title and the description instead of the fields, and an
+unparseable answer renders the HTTP status.  Remarks fill to
+`fill-column' because the buffer truncates lines.
+
 A buffer-local `net--rdap-in-flight` flag prevents duplicate requests.
-No automatic refresh or timer may call this command.
+`net-rdap-timeout` seconds later, `net--rdap-abandon` clears the flag
+and renders a warning, so a stalled connection cannot block the buffer
+for the session; a late answer still replaces that warning.  The
+callback hands its response buffer to `url-mark-buffer-as-dead`, so
+repeated lookups do not pile up one buffer each.  No automatic refresh
+or timer may call this command.
 
 ### Evil
 
@@ -163,7 +183,8 @@ command.  The bindings put the commands of `net-mode-map` back:
 the value, `b` fetches RDAP and `i` inspects the address at point.
 The motions `j`, `k`, `gg`, `G`, `C-d`, `C-u`, `/`, `n` and `N` stay
 evil.  Visual state binds only `RET`, because it needs its text
-objects.
+objects.  Evil keeps `TAB` for its jump motion, so `net-evil-keys`
+leaves the button motion of `net-mode-map` out.
 
 `net-evil-keys` and `net-evil-visual-keys` hold the key tables.
 `net-evil--bind` feeds them to `evil-define-minor-mode-key` for the

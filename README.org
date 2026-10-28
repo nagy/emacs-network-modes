@@ -38,13 +38,16 @@ One dispatcher finds the right mode for the token at point:
 The dispatcher accepts CIDR prefixes, MAC addresses (colon, hyphen,
 Cisco dot form), =AS= numbers, including ASDOT after the =AS= prefix,
 IPv4 and IPv6 addresses, domain names and =CID:PORT= vsock addresses.
-A trailing sentence period does not hide the address.
+A trailing sentence period does not hide the address, and the host of
+a URL counts as an address.
 
 ** Key bindings
 
 | Key   | Command          | Description                      |
 |-------+------------------+----------------------------------|
 | =RET= | =push-button=    | follow a field or address button |
+| =TAB= | =forward-button= | move to the next button          |
+| =S-TAB= | =backward-button= | move to the previous button    |
 | =q=   | =quit-window=    | bury the inspect buffer          |
 | =gr=  | =revert-buffer=  | render the value again           |
 | =w=   | =net-copy-value= | copy the inspected value         |
@@ -60,14 +63,20 @@ buffer.  Inspecting the same value twice reuses the same buffer.
 
 Buffer names follow =*net-KIND VALUE*=.  The header line repeats the
 kind, the value and a one-line classification.  =C-x r m= bookmarks an
-address, because the buffer installs a bookmark handler.
+address, because the buffer installs a bookmark handler.  The section
+headings feed Imenu, so =imenu= lists every section of the buffer.
 
 ** RDAP
 
 =net-rdap= (=b=) fetches =https://rdap.org/TYPE/KEY= asynchronously and
 renders the answer in a section at the end of the buffer.  A second
-lookup replaces that section.  The command only runs when you invoke
-it.  Opening, reverting or rendering a buffer never touches the network.
+lookup replaces that section.  An error answer shows the RDAP code,
+title and description, and a failed or timed-out request shows a
+warning line.  =net-rdap-timeout= sets the wait in seconds, 30 by
+default, and a late answer still replaces the warning.  =gr= renders
+the value again and drops the RDAP section with it.  The command only
+runs when you invoke it.  Opening, reverting or rendering a buffer
+never touches the network.
 
 * Databases
 
@@ -194,8 +203,9 @@ the commands of =net-mode-map= a state key:
 The motions =j=, =k=, =gg=, =G=, =C-d=, =C-u=, =/=, =n= and =N= stay
 evil.  A read-only buffer has nothing to insert or paste, so the
 inspect commands win on =w=, =b= and =i=.  Visual state binds only
-=RET= and keeps its text objects.  =net-evil-mode= adds and removes
-the keys for every inspect buffer, existing or new.
+=RET= and keeps its text objects.  Evil keeps =TAB= for its jump
+motion, so the button motion stays on =RET=.  =net-evil-mode= adds and
+removes the keys for every inspect buffer, existing or new.
 
 * Testing
 
