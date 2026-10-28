@@ -33,7 +33,7 @@ network, and it runs only when invoked.
 | `net-tests.el`      | ERT suite (84 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
-| `tools/pack-network-data.py` | Packs the range databases into fixed-width tables              |
+| `tools/pack-network-data.el` | Packs the range databases into fixed-width tables              |
 | `README.org`        | User documentation                                                      |
 | `LICENSE`           | AGPL-3.0-or-later                                                       |
 
@@ -146,7 +146,7 @@ an aggregated iptoasn row renders as a range.
 
 ### Packed range tables
 
-`tools/pack-network-data.py` runs at build time and writes four files:
+`tools/pack-network-data.el` runs at build time and writes four files:
 `geo-ranges-v4.bin`, `geo-ranges-v6.bin`, `asn-ranges-v4.bin` and
 `asn-ranges-v6.bin`.  The GeoIP CSV parse and the gzip pass therefore
 leave the run time path: the first IP buffer went from 9.2 seconds to
@@ -161,6 +161,16 @@ table:
 - row: start address and end address as big-endian bytes, one u32 per
   number column, one u32 per string column
 - string table: count u32, then each UTF-8 string with a u16 length
+
+The format has one description.  `net--binary-header-type`,
+`net--binary-row-type`, `net--binary-edge-type` and
+`net--binary-names-type` are `bindat-type` values, and both the reader
+and the packer use them.  The address widths and the column counts
+reach the type through lexical variables, so `(uint (* 8 width))` and
+`(vec numbers uint 32 t)` describe all four tables.  `bindat-unpack`
+takes a byte offset, so a lookup unpacks one row in place and no
+substring is allocated.  The packer allocates the output string once
+and packs every row into it at a computed offset.
 
 The header carries the layout, so `net--binary-table` takes the
 expected width and column counts and signals an error on a mismatch.
@@ -243,11 +253,17 @@ buffer falls back to `net-mode-map`.
 
 ```sh
 nix build                  # package
-nix flake check            # package + ERT + package-lint + checkdoc + treefmt
+nix flake check            # package + ERT + lint + checkdoc + data + treefmt
 nix develop                # Emacs with package-lint, embark and evil
 nix fmt                    # nixfmt via treefmt
 nix flake update           # refresh pinned database files
 ```
+
+The data derivation needs `emacs-nox` and four Elisp files: `net-mode.el`
+for the `bindat` types, `net-geo.el`, `net-asn.el` and `net-ip.el` for
+the readers and the address parser, and `tools/pack-network-data.el`
+for the packer.  Run the packer by hand with the command in its
+commentary.
 
 The package is `lib.makeOverridable`, so a consumer can substitute the
 Emacs, its package set, the build function, the evil package or the
@@ -344,8 +360,8 @@ suffix, which package-build and the lint gates exclude.
   `(net-data-file "upstream-name")`.  The IEEE registries keep their
   upstream file names inside `net-mac-registry-directory`.
 - A derived file carries its own name, not the upstream one.  The four
-  packed range tables come from `tools/pack-network-data.py`, whose
-  format and version live beside `net--binary-version` in `net-mode.el`.
+  packed range tables come from `tools/pack-network-data.el`, whose
+  `bindat` types sit beside `net--binary-version` in `net-mode.el`.
   Keep the raw upstream file reachable too, so the CSV and TSV readers
   stay testable.
 - MAC vendor data uses the IEEE registries.  MA-S and IAB share the

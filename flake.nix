@@ -130,7 +130,7 @@
             pkgs.runCommand "network-modes-data"
               {
                 meta.description = "Pinned network databases for the Emacs network modes";
-                nativeBuildInputs = [ pkgs.python3 ];
+                nativeBuildInputs = [ pkgs.emacs-nox ];
               }
               ''
                 mkdir -p $out
@@ -153,7 +153,15 @@
                 ln -s ${pkgs.publicsuffix-list}/share/publicsuffix/public_suffix_list.dat \
                   $out/public_suffix_list.dat
 
-                python3 ${./tools/pack-network-data.py} \
+                # The packer is Emacs Lisp, so one `bindat' description
+                # reads and writes the format.  It needs the readers and
+                # the address parser, and nothing else.
+                cp ${./net-mode.el} net-mode.el
+                cp ${./net-geo.el} net-geo.el
+                cp ${./net-asn.el} net-asn.el
+                cp ${./net-ip.el} net-ip.el
+                cp ${./tools/pack-network-data.el} pack-network-data.el
+                emacs --batch -L . -l pack-network-data.el -- \
                   --geo-v4 ${inputs.geoipV4} \
                   --geo-v6 ${inputs.geoipV6} \
                   --asn-v4 ${inputs.iptoasnV4} \

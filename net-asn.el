@@ -53,7 +53,7 @@
 ;; `net-asn-ip-entry' binary searches the line starts, so one lookup
 ;; parses about twenty rows instead of the whole file.  The Nix
 ;; derivation packs the same ranges into a fixed-width table
-;; (`tools/pack-network-data.py'), which needs no decompression and no
+;; (`tools/pack-network-data.el'), which needs no decompression and no
 ;; line scan.  A raw TSV or gzip file still works.
 ;;
 ;; Entry points:

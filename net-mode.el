@@ -56,6 +56,7 @@
 
 ;;; Code:
 
+(require 'bindat)
 (require 'bookmark)
 (require 'button)
 (require 'cl-lib)
@@ -440,14 +441,47 @@ when FILE is not readable."
 
 (defconst net--binary-version 1
   "Format version of a packed range table.
-Bump it in `tools/pack-network-data.py' and here together, so a stale
+Bump it here and in `tools/pack-network-data.el' together, so a stale
 derivation cannot be misread.")
 
 (defconst net--binary-header-size 20
   "Size in bytes of the header of a packed range table.")
 
+(defconst net--binary-header-type
+  (bindat-type (magic str 4)
+               (version uint 16 t)
+               (width u8)
+               (numbers u8)
+               (strings u8)
+               (_ fill 3)
+               (count uint 32 t)
+               (strings-offset uint 32 t))
+  "Bindat type of the header of a packed range table.
+`uint' takes its size in bits and an optional little-endian flag, so
+`uint 16 t' is a 16-bit little-endian field.")
+
 (defvar net--binary-cache nil
   "Alist of (FILE MTIME SIZE . TABLE) for packed range tables.")
+
+(defun net--binary-row-type (width numbers strings)
+  "Return the Bindat type of one packed table row.
+WIDTH is the address width in bytes, NUMBERS the number of 32-bit
+number columns and STRINGS the number of string columns."
+  (bindat-type (start uint (* 8 width))
+               (end uint (* 8 width))
+               (numbers vec numbers uint 32 t)
+               (strings vec strings uint 32 t)))
+
+(defun net--binary-edge-type (width)
+  "Return the Bindat type of the addresses of a row WIDTH bytes wide."
+  (bindat-type (start uint (* 8 width))
+               (end uint (* 8 width))))
+
+(defun net--binary-names-type ()
+  "Return the Bindat type of the packed string table.
+The table carries its own count, so one table size fits every file."
+  (bindat-type (count uint 32 t)
+               (names repeat count (len uint 16 t) (text str len))))
 
 (defun net--binary-available-p (file)
   "Return non-nil when FILE starts with the packed table magic."
@@ -457,31 +491,16 @@ derivation cannot be misread.")
       (insert-file-contents-literally file nil 0 (length net--binary-magic))
       (equal (buffer-string) net--binary-magic))))
 
-(defun net--binary-u16 (bytes offset)
-  "Return the little-endian 16-bit integer of BYTES at OFFSET."
-  (+ (aref bytes offset)
-     (ash (aref bytes (1+ offset)) 8)))
-
-(defun net--binary-u32 (bytes offset)
-  "Return the little-endian 32-bit integer of BYTES at OFFSET."
-  (logior (aref bytes offset)
-          (ash (aref bytes (+ offset 1)) 8)
-          (ash (aref bytes (+ offset 2)) 16)
-          (ash (aref bytes (+ offset 3)) 24)))
-
 (defun net--binary-names (bytes offset)
-  "Return the name vector in BYTES that starts at OFFSET."
-  (let* ((count (net--binary-u32 bytes offset))
-         (position (+ offset 4))
-         (names (make-vector count nil))
+  "Return from BYTES the string table names at OFFSET."
+  (let* ((entries (bindat-get-field
+                   (bindat-unpack (net--binary-names-type) bytes offset)
+                   'names))
+         (names (make-vector (length entries) nil))
          (index 0))
-    (while (< index count)
-      (let ((length (net--binary-u16 bytes position)))
-        (setq position (+ position 2))
-        (aset names index
-              (decode-coding-string
-               (substring bytes position (+ position length)) 'utf-8))
-        (setq position (+ position length)))
+    (dolist (entry entries)
+      (aset names index
+            (decode-coding-string (bindat-get-field entry 'text) 'utf-8))
       (setq index (1+ index)))
     names))
 
@@ -493,15 +512,17 @@ derivation cannot be misread.")
       (insert-file-contents-literally file)
       (let* ((bytes (buffer-string))
              (size (length bytes)))
-        (when (and (>= size net--binary-header-size)
-                   (= (net--binary-u16 bytes 4) net--binary-version))
-          (let* ((width (aref bytes 6))
-                 (numbers (aref bytes 7))
-                 (strings (aref bytes 8))
-                 (count (net--binary-u32 bytes 12))
-                 (strings-offset (net--binary-u32 bytes 16))
+        (when (>= size net--binary-header-size)
+          (let* ((header (bindat-unpack net--binary-header-type bytes))
+                 (version (bindat-get-field header 'version))
+                 (width (bindat-get-field header 'width))
+                 (numbers (bindat-get-field header 'numbers))
+                 (strings (bindat-get-field header 'strings))
+                 (count (bindat-get-field header 'count))
+                 (strings-offset (bindat-get-field header 'strings-offset))
                  (row-size (+ (* 2 width) (* 4 numbers) (* 4 strings))))
-            (when (and (memq width '(4 16))
+            (when (and (= version net--binary-version)
+                       (memq width '(4 16))
                        (= strings-offset
                           (+ net--binary-header-size (* count row-size)))
                        (<= strings-offset size))
@@ -512,6 +533,8 @@ derivation cannot be misread.")
                     :count count
                     :row-size row-size
                     :rows bytes
+                    :row-type (net--binary-row-type width numbers strings)
+                    :edge-type (net--binary-edge-type width)
                     :names (net--binary-names bytes strings-offset)))))))))
 
 (defun net--binary-table (file &optional layout)
@@ -545,40 +568,36 @@ derivation cannot be read as the wrong table."
   "Return the byte offset of TABLE row INDEX."
   (+ net--binary-header-size (* index (plist-get table :row-size))))
 
-(defun net--binary-address (table offset)
-  "Return the big-endian address of TABLE at OFFSET."
-  (let ((rows (plist-get table :rows))
-        (width (plist-get table :width))
-        (value 0)
-        (index 0))
-    (while (< index width)
-      (setq value (logior (ash value 8) (aref rows (+ offset index))))
-      (setq index (1+ index)))
-    value))
+(defun net--binary-row (table index)
+  "Return the unpacked TABLE row INDEX."
+  (bindat-unpack (plist-get table :row-type)
+                 (plist-get table :rows)
+                 (net--binary-row-offset table index)))
 
 (defun net--binary-start (table index)
   "Return the first address of TABLE row INDEX."
-  (net--binary-address table (net--binary-row-offset table index)))
+  (bindat-get-field
+   (bindat-unpack (plist-get table :edge-type)
+                  (plist-get table :rows)
+                  (net--binary-row-offset table index))
+   'start))
 
 (defun net--binary-end (table index)
   "Return the last address of TABLE row INDEX."
-  (net--binary-address table (+ (net--binary-row-offset table index)
-                                (plist-get table :width))))
+  (bindat-get-field
+   (bindat-unpack (plist-get table :edge-type)
+                  (plist-get table :rows)
+                  (net--binary-row-offset table index))
+   'end))
 
 (defun net--binary-number (table index column)
   "Return from TABLE row INDEX the numeric COLUMN."
-  (net--binary-u32 (plist-get table :rows)
-                   (+ (net--binary-row-offset table index)
-                      (* 2 (plist-get table :width))
-                      (* 4 column))))
+  (aref (bindat-get-field (net--binary-row table index) 'numbers) column))
 
 (defun net--binary-string (table index column)
   "Return from TABLE row INDEX the string COLUMN."
-  (let* ((position (+ (net--binary-row-offset table index)
-                      (* 2 (plist-get table :width))
-                      (* 4 (plist-get table :numbers))
-                      (* 4 column)))
-         (name (net--binary-u32 (plist-get table :rows) position)))
+  (let ((name (aref (bindat-get-field (net--binary-row table index) 'strings)
+                    column)))
     (aref (plist-get table :names) name)))
 
 (defun net--binary-find (table value)

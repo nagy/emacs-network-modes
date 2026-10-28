@@ -68,51 +68,56 @@ Bind `net-tests--file' to the file name."
            ,@body)
        (delete-file net-tests--file))))
 
-(defun net-tests--le-bytes (value bits)
-  "Return the little-endian bytes of VALUE in BITS bits."
-  (cl-loop for offset from 0 below bits by 8
-           collect (logand (ash value (- offset)) #xff)))
-
-(defun net-tests--be-bytes (value width)
-  "Return the big-endian bytes of VALUE in WIDTH bytes."
-  (cl-loop for offset from (* 8 (1- width)) downto 0 by 8
-           collect (logand (ash value (- offset)) #xff)))
-
 (defun net-tests--packed-table (width numbers strings rows)
   "Return a packed range table as a unibyte string.
 ROWS holds (START END NUMBERS TEXTS) lists.  This mirrors
-`tools/pack-network-data.py', so a reader change fails a test."
-  (let ((names nil)
-        (indexes (make-hash-table :test #'equal)))
+`tools/pack-network-data.el', so a reader change fails a test."
+  (let* ((indexes (make-hash-table :test #'equal))
+         (names nil)
+         (row-size (+ (* 2 width) (* 4 numbers) (* 4 strings)))
+         (count (length rows))
+         (strings-offset (+ net--binary-header-size (* count row-size))))
     (dolist (row rows)
       (dolist (text (nth 3 row))
         (unless (gethash text indexes)
           (puthash text (length names) indexes)
           (setq names (append names (list text))))))
-    (let* ((row-size (+ (* 2 width) (* 4 numbers) (* 4 strings)))
-           (bytes (append (string-to-list "NETR")
-                          (net-tests--le-bytes 1 16)
-                          (list width numbers strings 0 0 0)
-                          (net-tests--le-bytes (length rows) 32)
-                          (net-tests--le-bytes
-                           (+ 20 (* (length rows) row-size)) 32))))
-      (dolist (row rows)
-        (setq bytes (append bytes
-                            (net-tests--be-bytes (nth 0 row) width)
-                            (net-tests--be-bytes (nth 1 row) width)))
-        (dolist (value (nth 2 row))
-          (setq bytes (append bytes (net-tests--le-bytes value 32))))
-        (dolist (text (nth 3 row))
-          (setq bytes (append bytes
-                              (net-tests--le-bytes
-                               (gethash text indexes) 32)))))
-      (setq bytes (append bytes (net-tests--le-bytes (length names) 32)))
-      (dolist (name names)
-        (let ((encoded (string-to-list (encode-coding-string name 'utf-8))))
-          (setq bytes (append bytes
-                              (net-tests--le-bytes (length encoded) 16)
-                              encoded))))
-      (apply #'unibyte-string bytes))))
+    (let* ((table (mapcar (lambda (text)
+                            (let ((encoded (encode-coding-string text 'utf-8)))
+                              (list (cons 'len (length encoded))
+                                    (cons 'text encoded))))
+                          names))
+           (names-type (net--binary-names-type))
+           (names-value (list (cons 'count (length table))
+                              (cons 'names table)))
+           (total (+ strings-offset
+                     (bindat-length names-type names-value)))
+           (raw (make-string total 0))
+           (type (net--binary-row-type width numbers strings)))
+      (bindat-pack net--binary-header-type
+                   (list (cons 'magic net--binary-magic)
+                         (cons 'version net--binary-version)
+                         (cons 'width width)
+                         (cons 'numbers numbers)
+                         (cons 'strings strings)
+                         (cons 'count count)
+                         (cons 'strings-offset strings-offset))
+                   raw 0)
+      (let ((offset net--binary-header-size))
+        (dolist (row rows)
+          (bindat-pack type
+                       (list (cons 'start (nth 0 row))
+                             (cons 'end (nth 1 row))
+                             (cons 'numbers (vconcat (nth 2 row)))
+                             (cons 'strings
+                                   (vconcat
+                                    (mapcar (lambda (text)
+                                              (gethash text indexes))
+                                            (nth 3 row)))))
+                       raw offset)
+          (setq offset (+ offset row-size))))
+      (bindat-pack names-type names-value raw strings-offset)
+      raw)))
 
 (defvar net-tests--file nil
   "Temporary file used by the tests.")

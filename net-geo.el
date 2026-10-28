@@ -42,7 +42,7 @@
 ;;   https://github.com/sapics/ip-location-db
 ;;
 ;; The Nix derivation packs the range files into a fixed-width table
-;; (`tools/pack-network-data.py'), so a lookup reads one file and
+;; (`tools/pack-network-data.el'), so a lookup reads one file and
 ;; binary searches it.  A raw CSV file from ip-location-db works too:
 ;; the first lookup parses the whole file once and caches a flat vector
 ;; of start, end and country code.

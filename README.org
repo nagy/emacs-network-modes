@@ -162,9 +162,11 @@ every database without configuration.  The Public Suffix List comes from
 nixpkgs (=publicsuffix-list=).
 
 The same derivation packs the GeoIP and origin AS ranges into
-fixed-width tables with =tools/pack-network-data.py=.  =nix flake check=
-runs =checks.data-tables=, which reads those tables through the real
-Emacs readers.
+fixed-width tables with =tools/pack-network-data.el=.  The packer is
+Emacs Lisp and uses the same =bindat= type description as the readers,
+so the writer and the reader cannot disagree about the layout.
+=nix flake check= runs =checks.data-tables=, which reads those tables
+through the real Emacs readers.
 
 The package is overridable, so a consumer can build it for another
 Emacs:
