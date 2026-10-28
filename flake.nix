@@ -121,10 +121,16 @@
           # One data package: symlink every pinned database under a
           # single directory.  Large files already live in the store, so
           # a symlink avoids copying the 70 MB AS metadata file.
+          #
+          # The four range tables are packed at build time, so the Emacs
+          # readers binary search fixed-width rows instead of parsing
+          # megabytes of CSV and gunzipping a TSV on first use.  The raw
+          # files stay linked for users who want the upstream shape.
           networkModesData =
             pkgs.runCommand "network-modes-data"
               {
                 meta.description = "Pinned network databases for the Emacs network modes";
+                nativeBuildInputs = [ pkgs.python3 ];
               }
               ''
                 mkdir -p $out
@@ -146,6 +152,13 @@
                 # The PSL comes from nixpkgs, which tracks publicsuffix.org.
                 ln -s ${pkgs.publicsuffix-list}/share/publicsuffix/public_suffix_list.dat \
                   $out/public_suffix_list.dat
+
+                python3 ${./tools/pack-network-data.py} \
+                  --geo-v4 ${inputs.geoipV4} \
+                  --geo-v6 ${inputs.geoipV6} \
+                  --asn-v4 ${inputs.iptoasnV4} \
+                  --asn-v6 ${inputs.iptoasnV6} \
+                  --out-dir $out
               '';
 
           # Date of the flake source, folded into the version string.
@@ -284,6 +297,26 @@
           # with warnings as errors plus the full ERT suite gate every
           # change, not only `nix build'.
           checks.package = networkModes;
+
+          # The packed range tables and the Elisp decoders must agree.
+          # This check reads the real derivation, not a test fixture.
+          checks.data-tables =
+            pkgs.runCommandLocal "network-modes-data-tables"
+              {
+                nativeBuildInputs = [ pkgs.emacs ];
+                src = networkModes.src;
+              }
+              ''
+                cp "$src"/*.el .
+                emacs --batch -L . \
+                  --eval '(setq net-data-directory "${networkModesData}")' \
+                  -l network-modes -l net-geo \
+                  --eval '(let ((country (net-geo-country (plist-get (net-ip-parse "8.8.8.8") :value) 4))) (unless (equal country "US") (error "GeoIP v4: %S" country)))' \
+                  --eval '(let ((entry (net-asn-ip-entry (plist-get (net-ip-parse "8.8.8.8") :value) 4))) (unless (equal (plist-get entry :asn) 15169) (error "ASN v4: %S" entry)))' \
+                  --eval '(let ((country (net-geo-country (plist-get (net-ip-parse "2001:4860:4860::8888") :value) 6))) (unless (equal country "US") (error "GeoIP v6: %S" country)))' \
+                  --eval '(let ((entry (net-asn-ip-entry (plist-get (net-ip-parse "2001:4860:4860::8888") :value) 6))) (unless (equal (plist-get entry :asn) 15169) (error "ASN v6: %S" entry)))'
+                touch $out
+              '';
 
           # package-lint: ELPA policy (headers, symbol prefixes,
           # dependency declarations).  The package shares the short

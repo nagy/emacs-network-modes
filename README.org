@@ -103,23 +103,35 @@ short vendor names.
 
 The origin AS of an address comes from the iptoasn range tables, not
 from RDAP: RDAP publishes addresses and entities, but not routing.
-Both tables hold roughly 700 000 sorted ranges and stay gzipped.  The
-lookup decompresses one file, then binary searches the line starts, so
-it reads about twenty rows instead of the whole table.
+The GeoIP country comes from the ip-location-db range tables.
+
+Both sources are range tables sorted by start address.  The Nix
+derivation packs them into fixed-width files, so a lookup inserts one
+file and binary searches integer offsets: no CSV parse, no gzip pass.
+A raw upstream CSV or gzipped TSV file works too, and is parsed on
+first use.
 
 ** One directory for everything
 
 =net-data-directory= is the single knob.  Each option above defaults to
 =net-data-file NAME= for the file names below, so setting the directory
-is enough when the files carry their upstream names.  The old names
+is enough when the files carry their names.  The old names
 =net-cidr-registry-file= and =net-cidr-registry-file-v6= alias the
 =net-ip= options of the same name.
+
+The package ships the packed GeoIP and origin AS tables, and keeps the
+raw upstream files beside them.  Point =net-geo-database-file= or
+=net-asn-ip-database-file= at an upstream file to use it directly.
 
 #+begin_src text
 as.json
 as-numbers-1.csv
 as-numbers-2.csv
+asn-ranges-v4.bin
+asn-ranges-v6.bin
 cid.csv
+geo-ranges-v4.bin
+geo-ranges-v6.bin
 iab.csv
 iana-ipv4-special-registry.csv
 iana-ipv6-special-registry.csv
@@ -148,6 +160,11 @@ their hashes.  The flake collects them in one derivation and substitutes
 =net-data-directory= with its store path, so the installed package finds
 every database without configuration.  The Public Suffix List comes from
 nixpkgs (=publicsuffix-list=).
+
+The same derivation packs the GeoIP and origin AS ranges into
+fixed-width tables with =tools/pack-network-data.py=.  =nix flake check=
+runs =checks.data-tables=, which reads those tables through the real
+Emacs readers.
 
 The package is overridable, so a consumer can build it for another
 Emacs:

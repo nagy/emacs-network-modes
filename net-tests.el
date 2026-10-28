@@ -54,6 +54,66 @@
            ,@body)
        (delete-file net-tests--file))))
 
+(defmacro net-tests--with-binary-file (bytes &rest body)
+  "Write the byte string BYTES to a temporary file, run BODY.
+Bind `net-tests--file' to the file name."
+  (declare (indent 1))
+  `(let ((net-tests--file (make-temp-file "net-tests" nil ".bin")))
+     (unwind-protect
+         (progn
+           (let ((coding-system-for-write 'no-conversion))
+             (with-temp-file net-tests--file
+               (set-buffer-multibyte nil)
+               (insert ,bytes)))
+           ,@body)
+       (delete-file net-tests--file))))
+
+(defun net-tests--le-bytes (value bits)
+  "Return the little-endian bytes of VALUE in BITS bits."
+  (cl-loop for offset from 0 below bits by 8
+           collect (logand (ash value (- offset)) #xff)))
+
+(defun net-tests--be-bytes (value width)
+  "Return the big-endian bytes of VALUE in WIDTH bytes."
+  (cl-loop for offset from (* 8 (1- width)) downto 0 by 8
+           collect (logand (ash value (- offset)) #xff)))
+
+(defun net-tests--packed-table (width numbers strings rows)
+  "Return a packed range table as a unibyte string.
+ROWS holds (START END NUMBERS TEXTS) lists.  This mirrors
+`tools/pack-network-data.py', so a reader change fails a test."
+  (let ((names nil)
+        (indexes (make-hash-table :test #'equal)))
+    (dolist (row rows)
+      (dolist (text (nth 3 row))
+        (unless (gethash text indexes)
+          (puthash text (length names) indexes)
+          (setq names (append names (list text))))))
+    (let* ((row-size (+ (* 2 width) (* 4 numbers) (* 4 strings)))
+           (bytes (append (string-to-list "NETR")
+                          (net-tests--le-bytes 1 16)
+                          (list width numbers strings 0 0 0)
+                          (net-tests--le-bytes (length rows) 32)
+                          (net-tests--le-bytes
+                           (+ 20 (* (length rows) row-size)) 32))))
+      (dolist (row rows)
+        (setq bytes (append bytes
+                            (net-tests--be-bytes (nth 0 row) width)
+                            (net-tests--be-bytes (nth 1 row) width)))
+        (dolist (value (nth 2 row))
+          (setq bytes (append bytes (net-tests--le-bytes value 32))))
+        (dolist (text (nth 3 row))
+          (setq bytes (append bytes
+                              (net-tests--le-bytes
+                               (gethash text indexes) 32)))))
+      (setq bytes (append bytes (net-tests--le-bytes (length names) 32)))
+      (dolist (name names)
+        (let ((encoded (string-to-list (encode-coding-string name 'utf-8))))
+          (setq bytes (append bytes
+                              (net-tests--le-bytes (length encoded) 16)
+                              encoded))))
+      (apply #'unibyte-string bytes))))
+
 (defvar net-tests--file nil
   "Temporary file used by the tests.")
 
@@ -101,6 +161,72 @@
                      "https://rdap.arin.net/registry\nhttp://rdap.arin.net/registry"))
       (should (equal (nth 4 (nth 1 records)) "[RFC 1]"))))
   (should-not (net--read-csv-file nil)))
+
+(ert-deftest net-tests-read-csv-file-crlf ()
+  "The record reader accepts CRLF line endings."
+  (net-tests--with-file "a,b\r\nc,d\r\n"
+    (should (equal (net--read-csv-file net-tests--file)
+                   '(("a" "b") ("c" "d"))))))
+
+(ert-deftest net-tests-binary-table ()
+  "The packed table reader binary searches fixed-width rows."
+  (net-tests--with-binary-file
+      (net-tests--packed-table
+       4 0 1
+       '((0 255 () ("LO"))
+         (256 511 () ("HI"))
+         (4096 4351 () ("TOP"))))
+    (let ((net--binary-cache nil))
+      (should (net--binary-available-p net-tests--file))
+      (let ((table (net--binary-table net-tests--file
+                                      '(:width 4 :numbers 0 :strings 1))))
+        (should (= (plist-get table :count) 3))
+        (should (eq table (net--binary-table
+                           net-tests--file
+                           '(:width 4 :numbers 0 :strings 1))))
+        (should (= (net--binary-find table 0) 0))
+        (should (= (net--binary-find table 255) 0))
+        (should (= (net--binary-find table 256) 1))
+        (should (= (net--binary-find table 4351) 2))
+        (should-not (net--binary-find table 512))
+        (should-not (net--binary-find table 4352))
+        (should (equal (net--binary-string table 1 0) "HI"))
+        (should (= (net--binary-start table 2) 4096))
+        (should (= (net--binary-end table 2) 4351))))))
+
+(ert-deftest net-tests-binary-table-layout ()
+  "A packed table with the wrong layout signals an error."
+  (net-tests--with-binary-file
+      (net-tests--packed-table 4 0 1 '((0 255 () ("LO"))))
+    (let ((net--binary-cache nil))
+      (should-error (net--binary-table net-tests--file
+                                       '(:width 4 :numbers 1 :strings 1)))
+      (should-error (net--binary-table net-tests--file
+                                       '(:width 16 :numbers 0 :strings 1))))))
+
+(ert-deftest net-tests-binary-table-ipv6 ()
+  "A 16 byte address decodes to the same integer as `net-ip-parse'."
+  (let* ((start (plist-get (net-ip-parse "2001:db8::") :value))
+         (end (plist-get (net-ip-parse "2001:db8::ffff") :value)))
+    (net-tests--with-binary-file
+        (net-tests--packed-table 16 1 2
+                                 (list (list start end (list 65000)
+                                             '("US" "EXAMPLE"))))
+      (let ((net--binary-cache nil)
+            (table (net--binary-table
+                    net-tests--file
+                    '(:width 16 :numbers 1 :strings 2))))
+        (should (= (net--binary-number table 0 0) 65000))
+        (should (equal (net--binary-string table 0 1) "EXAMPLE"))
+        (should (= (net--binary-find table start) 0))
+        (should (= (net--binary-find table end) 0))
+        (should-not (net--binary-find table (1+ end)))))))
+
+(ert-deftest net-tests-csv-not-binary ()
+  "A CSV file is not mistaken for a packed table."
+  (net-tests--with-file "1.0.0.0,1.0.0.255,AU\n"
+    (should-not (net--binary-available-p net-tests--file))
+    (should-not (net--binary-table net-tests--file))))
 
 (ert-deftest net-tests-display-reuses-buffer ()
   "Two inspections of the same value share one buffer."
@@ -911,6 +1037,21 @@ the start of the buffer."
                      "CN"))
       (should-not (net-geo-country (plist-get (net-ip-parse "1.0.4.0") :value) 4)))))
 
+(ert-deftest net-tests-geo-country-binary ()
+  "A packed range table answers the GeoIP lookup."
+  (net-tests--with-binary-file
+      (net-tests--packed-table
+       4 0 1
+       '((16777216 16777471 () ("AU"))
+         (16777472 16777727 () ("CN"))))
+    (let ((net-geo-database-file net-tests--file)
+          (net--binary-cache nil))
+      (should (equal (net-geo-country (net-tests--ip-number "1.0.0.5") 4)
+                     "AU"))
+      (should (equal (net-geo-country (net-tests--ip-number "1.0.1.1") 4)
+                     "CN"))
+      (should-not (net-geo-country (net-tests--ip-number "1.0.2.1") 4)))))
+
 (ert-deftest net-tests-geo-cache ()
   "The parsed range file is reused and cleared on request."
   (net-tests--with-file
@@ -953,7 +1094,37 @@ the start of the buffer."
       (should-not (net-asn-ip-entry (net-tests--ip-number "0.0.0.1") 4)))))
 
 (ert-deftest net-tests-asn-ip-entry-gzip ()
-  "The lookup gunzips a file with a gzip suffix."
+  "The lookup gunzips a file by its magic bytes."
+  (let ((plain (make-temp-file "net-tests" nil ".tsv"))
+        (file (make-temp-file "net-tests" nil ".tsv.gz")))
+    (unwind-protect
+        (progn
+          (with-temp-buffer
+            (insert net-tests--ip2asn)
+            (write-region (point-min) (point-max) plain nil 'silent))
+          (unless (executable-find "gzip")
+            (ert-skip "gzip is missing"))
+          (let ((data (with-temp-buffer
+                        (set-buffer-multibyte nil)
+                        (should (zerop (call-process "gzip" nil t nil
+                                                     "-c" plain)))
+                        (buffer-string))))
+            (let ((coding-system-for-write 'no-conversion))
+              (with-temp-file file
+                (set-buffer-multibyte nil)
+                (insert data))))
+          (should (net-asn--gzip-file-p file))
+          (let ((net-asn-ip-database-file file)
+                (net-asn--range-cache nil))
+            (should (= (plist-get (net-asn-ip-entry
+                                   (net-tests--ip-number "192.0.2.7") 4)
+                                  :asn)
+                       64500))))
+      (delete-file plain)
+      (delete-file file))))
+
+(ert-deftest net-tests-asn-ip-entry-gzip-suffix ()
+  "A gzip suffix alone does not trigger decompression."
   (let ((file (make-temp-file "net-tests" nil ".tsv.gz")))
     (unwind-protect
         (progn
@@ -961,12 +1132,50 @@ the start of the buffer."
             (insert net-tests--ip2asn)
             (write-region (point-min) (point-max) file nil 'silent))
           (should (string-suffix-p ".gz" file))
-          (let ((net-asn-ip-database-file file))
+          (let ((net-asn-ip-database-file file)
+                (net-asn--range-cache nil))
             (should (= (plist-get (net-asn-ip-entry
                                    (net-tests--ip-number "192.0.2.7") 4)
                                   :asn)
                        64500))))
       (delete-file file))))
+
+(ert-deftest net-tests-asn-ip-entry-binary ()
+  "A packed range table answers the origin AS lookup."
+  (net-tests--with-binary-file
+      (net-tests--packed-table
+       4 1 2
+       '((16777216 16777471 (13335) ("US" "CLOUDFLARENET"))
+         (16777472 16777727 (0) ("None" "Not routed"))))
+    (let ((net-asn-ip-database-file net-tests--file)
+          (net--binary-cache nil))
+      (let ((entry (net-asn-ip-entry (net-tests--ip-number "1.0.0.9") 4)))
+        (should (= (plist-get entry :asn) 13335))
+        (should (equal (plist-get entry :country) "US"))
+        (should (equal (plist-get entry :description) "CLOUDFLARENET"))
+        (should (= (plist-get entry :start) 16777216)))
+      (should (= (plist-get (net-asn-ip-entry
+                             (net-tests--ip-number "1.0.1.9") 4)
+                            :asn)
+                 0))
+      (should-not (net-asn-ip-entry (net-tests--ip-number "1.0.2.1") 4)))))
+
+(ert-deftest net-tests-asn-ip-range-cache ()
+  "The decompressed fallback table is reused across lookups."
+  (net-tests--with-file net-tests--ip2asn
+    (let ((net-asn-ip-database-file net-tests--file)
+          (net-asn--range-cache nil))
+      (should (= (plist-get (net-asn-ip-entry
+                             (net-tests--ip-number "1.0.0.5") 4)
+                            :asn)
+                 13335))
+      (let ((text (cdr net-asn--range-cache)))
+        (should text)
+        (should (= (plist-get (net-asn-ip-entry
+                               (net-tests--ip-number "192.0.2.7") 4)
+                              :asn)
+                   64500))
+        (should (eq (cdr net-asn--range-cache) text))))))
 
 (ert-deftest net-tests-asn-ip-entry-missing ()
   "A missing range file reports no entry."

@@ -41,8 +41,11 @@
 ;;
 ;;   https://github.com/sapics/ip-location-db
 ;;
-;; The first lookup parses the whole file once and caches a flat vector
-;; of start, end and country code.  Later lookups are logarithmic.
+;; The Nix derivation packs the range files into a fixed-width table
+;; (`tools/pack-network-data.py'), so a lookup reads one file and
+;; binary searches it.  A raw CSV file from ip-location-db works too:
+;; the first lookup parses the whole file once and caches a flat vector
+;; of start, end and country code.
 
 ;;; Code:
 
@@ -51,15 +54,17 @@
 
 (declare-function net-ip-parse "net-ip")
 
-(defcustom net-geo-database-file (net-data-file "user-country-ipv4.csv")
-  "IPv4 range file for the GeoIP country lookup, or nil.
-Each line holds start, end and country code, separated by commas."
+(defcustom net-geo-database-file (net-data-file "geo-ranges-v4.bin")
+  "IPv4 range table for the GeoIP country lookup, or nil.
+The Nix package ships a packed table.  A CSV file with start, end and
+country code columns works too, and is read on first use."
   :type '(choice (const :tag "None" nil) file)
   :group 'net)
 
-(defcustom net-geo-database-file-v6 (net-data-file "user-country-ipv6.csv")
-  "IPv6 range file for the GeoIP country lookup, or nil.
-Each line holds start, end and country code, separated by commas."
+(defcustom net-geo-database-file-v6 (net-data-file "geo-ranges-v6.bin")
+  "IPv6 range table for the GeoIP country lookup, or nil.
+The Nix package ships a packed table.  A CSV file with start, end and
+country code columns works too, and is read on first use."
   :type '(choice (const :tag "None" nil) file)
   :group 'net)
 
@@ -107,17 +112,26 @@ Return a plist with :ranges (a flat vector) and :count."
     (list :ranges (vconcat (nreverse ranges))
           :count count)))
 
+(defun net-geo--table (file version)
+  "Return the packed range table of FILE for VERSION, or nil."
+  (when file
+    (net--binary-table file (list :width (if (= version 4) 4 16)
+                                  :numbers 0
+                                  :strings 1))))
+
 (defun net-geo--data (file version)
-  "Return the parsed range data of FILE for VERSION, or nil.
+  "Return the parsed CSV range data of FILE for VERSION, or nil.
 Parse the file on first use and reuse the result while the file does
-not change."
-  (when-let* ((key (net-geo--file-key file version)))
-    (let ((cached (assoc key net-geo--cache)))
-      (if cached
-          (cdr cached)
-        (let ((data (net-geo--parse file version)))
-          (setq net-geo--cache (cons (cons key data) net-geo--cache))
-          data)))))
+not change.  Return nil when FILE is a packed table."
+  (when (and (net-data-available-p file)
+             (not (net--binary-available-p file)))
+    (when-let* ((key (net-geo--file-key file version)))
+      (let ((cached (assoc key net-geo--cache)))
+        (if cached
+            (cdr cached)
+          (let ((data (net-geo--parse file version)))
+            (setq net-geo--cache (cons (cons key data) net-geo--cache))
+            data))))))
 
 (defun net-geo--search (ranges address)
   "Return the country code of RANGES at ADDRESS."
@@ -143,9 +157,12 @@ not change."
   (let ((file (if (= version 4)
                   net-geo-database-file
                 net-geo-database-file-v6)))
-    (when-let* ((data (and (net-data-available-p file)
-                           (net-geo--data file version))))
-      (net-geo--search (plist-get data :ranges) value))))
+    (when (net-data-available-p file)
+      (if-let* ((table (net-geo--table file version)))
+          (when-let* ((index (net--binary-find table value)))
+            (net--binary-string table index 0))
+        (when-let* ((data (net-geo--data file version)))
+          (net-geo--search (plist-get data :ranges) value))))))
 
 (defun net-geo-description (file version)
   "Return a one-line description of the range FILE of VERSION.
@@ -153,7 +170,9 @@ A file in the Nix store has an epoch modification time, so report it
 as a pinned copy instead of a meaningless date."
   (let* ((attributes (file-attributes file))
          (time (file-attribute-modification-time attributes))
-         (count (or (plist-get (net-geo--data file version) :count) "?"))
+         (count (or (plist-get (net-geo--table file version) :count)
+                    (plist-get (net-geo--data file version) :count)
+                    "?"))
          (date (if (time-less-p time (encode-time 86400 0 0 1 1 1980))
                    "pinned copy"
                  (format-time-string "%Y-%m-%d" time))))
@@ -162,7 +181,8 @@ as a pinned copy instead of a meaningless date."
 (defun net-geo-clear-cache ()
   "Forget every parsed range file."
   (interactive)
-  (setq net-geo--cache nil))
+  (setq net-geo--cache nil
+        net--binary-cache nil))
 
 (provide 'net-geo)
 ;;; net-geo.el ends here

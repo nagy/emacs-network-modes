@@ -402,40 +402,199 @@ when FILE is not readable."
   (when (net-data-available-p file)
     (with-temp-buffer
       (insert-file-contents file)
+      (goto-char (point-min))
       (let ((records nil)
-            (fields nil)
-            (field nil)
-            (in-quotes nil)
-            (index (point-min))
-            (limit (point-max)))
-        (while (< index limit)
-          (let ((char (char-after index)))
-            (cond
-             ((and in-quotes (= char ?\"))
-              (if (and (< (1+ index) limit)
-                       (= (char-after (1+ index)) ?\"))
-                  (progn (push ?\" field) (cl-incf index))
-                (setq in-quotes nil)))
-             ((= char ?\") (setq in-quotes t))
-             ((and (not in-quotes) (= char ?\,))
-              (push (apply #'string (nreverse field)) fields)
-              (setq field nil))
-             ((and (not in-quotes) (= char ?\n))
-              (push (apply #'string (nreverse field)) fields)
-              (setq field nil
-                    fields (nreverse fields))
-              (unless (seq-every-p #'string-empty-p fields)
-                (push fields records))
-              (setq fields nil))
-             ((= char ?\r) nil)
-             (t (push char field))))
-          (cl-incf index))
-        (when (or field fields)
-          (push (apply #'string (nreverse field)) fields)
-          (setq fields (nreverse fields))
-          (unless (seq-every-p #'string-empty-p fields)
-            (push fields records)))
+            (record nil))
+        (while (not (eobp))
+          ;; One match reads one field, quotes or not, in C.
+          (re-search-forward "\\(?:\"\\(?:[^\"]\\|\"\"\\)*\"\\|[^,\r\n]*\\)")
+          (let ((field (match-string 0)))
+            (when (and (> (length field) 1)
+                       (eq (aref field 0) ?\")
+                       (eq (aref field (1- (length field))) ?\"))
+              (setq field (replace-regexp-in-string
+                           "\"\"" "\"" (substring field 1 -1) t t)))
+            (push field record))
+          (cond
+           ((eq (char-after) ?\,) (forward-char 1))
+           ((memq (char-after) '(?\n ?\r))
+            (if (eq (char-after) ?\r) (forward-char 1))
+            (if (eq (char-after) ?\n) (forward-char 1))
+            (setq record (net--csv-record record))
+            (when record (push record records))
+            (setq record nil))))
+        (setq record (net--csv-record record))
+        (when record (push record records))
         (nreverse records)))))
+
+(defun net--csv-record (record)
+  "Return RECORD in file order, or nil when every field is empty."
+  (let ((fields (nreverse record)))
+    (unless (seq-every-p #'string-empty-p fields)
+      fields)))
+
+;;; Packed range tables
+
+(defconst net--binary-magic "NETR"
+  "Magic bytes of a packed range table.")
+
+(defconst net--binary-version 1
+  "Format version of a packed range table.
+Bump it in `tools/pack-network-data.py' and here together, so a stale
+derivation cannot be misread.")
+
+(defconst net--binary-header-size 20
+  "Size in bytes of the header of a packed range table.")
+
+(defvar net--binary-cache nil
+  "Alist of (FILE MTIME SIZE . TABLE) for packed range tables.")
+
+(defun net--binary-available-p (file)
+  "Return non-nil when FILE starts with the packed table magic."
+  (when (net-data-available-p file)
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally file nil 0 (length net--binary-magic))
+      (equal (buffer-string) net--binary-magic))))
+
+(defun net--binary-u16 (bytes offset)
+  "Return the little-endian 16-bit integer of BYTES at OFFSET."
+  (+ (aref bytes offset)
+     (ash (aref bytes (1+ offset)) 8)))
+
+(defun net--binary-u32 (bytes offset)
+  "Return the little-endian 32-bit integer of BYTES at OFFSET."
+  (logior (aref bytes offset)
+          (ash (aref bytes (+ offset 1)) 8)
+          (ash (aref bytes (+ offset 2)) 16)
+          (ash (aref bytes (+ offset 3)) 24)))
+
+(defun net--binary-names (bytes offset)
+  "Return the name vector in BYTES that starts at OFFSET."
+  (let* ((count (net--binary-u32 bytes offset))
+         (position (+ offset 4))
+         (names (make-vector count nil))
+         (index 0))
+    (while (< index count)
+      (let ((length (net--binary-u16 bytes position)))
+        (setq position (+ position 2))
+        (aset names index
+              (decode-coding-string
+               (substring bytes position (+ position length)) 'utf-8))
+        (setq position (+ position length)))
+      (setq index (1+ index)))
+    names))
+
+(defun net--binary-parse (file)
+  "Return the packed table in FILE, or nil when FILE is not packed."
+  (when (net--binary-available-p file)
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally file)
+      (let* ((bytes (buffer-string))
+             (size (length bytes)))
+        (when (and (>= size net--binary-header-size)
+                   (= (net--binary-u16 bytes 4) net--binary-version))
+          (let* ((width (aref bytes 6))
+                 (numbers (aref bytes 7))
+                 (strings (aref bytes 8))
+                 (count (net--binary-u32 bytes 12))
+                 (strings-offset (net--binary-u32 bytes 16))
+                 (row-size (+ (* 2 width) (* 4 numbers) (* 4 strings))))
+            (when (and (memq width '(4 16))
+                       (= strings-offset
+                          (+ net--binary-header-size (* count row-size)))
+                       (<= strings-offset size))
+              (list :file file
+                    :width width
+                    :numbers numbers
+                    :strings strings
+                    :count count
+                    :row-size row-size
+                    :rows bytes
+                    :names (net--binary-names bytes strings-offset)))))))))
+
+(defun net--binary-table (file &optional layout)
+  "Return the packed range table in FILE, or nil.
+LAYOUT is a plist with :width, :numbers and :strings.  Signal an
+error when FILE is packed but its layout differs, so a stale
+derivation cannot be read as the wrong table."
+  (when-let* ((attributes (and (net-data-available-p file)
+                               (file-attributes file)))
+              (key (list file
+                         (file-attribute-modification-time attributes)
+                         (file-attribute-size attributes))))
+    (let ((table (if-let* ((cached (assoc key net--binary-cache)))
+                     (cdr cached)
+                   (let ((parsed (net--binary-parse file)))
+                     (when parsed
+                       (setq net--binary-cache
+                             (cons (cons key parsed) net--binary-cache)))
+                     parsed))))
+      (when table
+        (dolist (property '(:width :numbers :strings))
+          (when (and (plist-member layout property)
+                     (not (equal (plist-get layout property)
+                                 (plist-get table property))))
+            (error "Packed table layout mismatch in %s: %s is %s, expected %s"
+                   file property (plist-get table property)
+                   (plist-get layout property))))
+        table))))
+
+(defun net--binary-row-offset (table index)
+  "Return the byte offset of TABLE row INDEX."
+  (+ net--binary-header-size (* index (plist-get table :row-size))))
+
+(defun net--binary-address (table offset)
+  "Return the big-endian address of TABLE at OFFSET."
+  (let ((rows (plist-get table :rows))
+        (width (plist-get table :width))
+        (value 0)
+        (index 0))
+    (while (< index width)
+      (setq value (logior (ash value 8) (aref rows (+ offset index))))
+      (setq index (1+ index)))
+    value))
+
+(defun net--binary-start (table index)
+  "Return the first address of TABLE row INDEX."
+  (net--binary-address table (net--binary-row-offset table index)))
+
+(defun net--binary-end (table index)
+  "Return the last address of TABLE row INDEX."
+  (net--binary-address table (+ (net--binary-row-offset table index)
+                                (plist-get table :width))))
+
+(defun net--binary-number (table index column)
+  "Return from TABLE row INDEX the numeric COLUMN."
+  (net--binary-u32 (plist-get table :rows)
+                   (+ (net--binary-row-offset table index)
+                      (* 2 (plist-get table :width))
+                      (* 4 column))))
+
+(defun net--binary-string (table index column)
+  "Return from TABLE row INDEX the string COLUMN."
+  (let* ((position (+ (net--binary-row-offset table index)
+                      (* 2 (plist-get table :width))
+                      (* 4 (plist-get table :numbers))
+                      (* 4 column)))
+         (name (net--binary-u32 (plist-get table :rows) position)))
+    (aref (plist-get table :names) name)))
+
+(defun net--binary-find (table value)
+  "Return the row index of TABLE that covers VALUE, or nil.
+The rows are sorted by start address and do not overlap."
+  (let ((low 0)
+        (high (1- (plist-get table :count))))
+    (while (<= low high)
+      (let ((middle (/ (+ low high) 2)))
+        (if (> (net--binary-start table middle) value)
+            (setq high (1- middle))
+          (setq low (1+ middle)))))
+    (when (> low 0)
+      (let ((index (1- low)))
+        (when (<= value (net--binary-end table index))
+          index)))))
 
 (defun net--copy-button (button)
   "Copy the value of BUTTON to the kill ring."

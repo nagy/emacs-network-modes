@@ -488,11 +488,11 @@ multicast blocks stay classified."
                                      "."))
       (net-insert-field "Expanded" (net-ip--format-ipv6-full value)))))
 
-(defun net-ip--insert-classification-section (parsed)
-  "Insert the special-purpose classification of PARSED."
+(defun net-ip--insert-classification-section (parsed matches)
+  "Insert the special-purpose classification of PARSED.
+MATCHES holds the result of `net-ip-matching-blocks' for PARSED."
   (let* ((value (plist-get parsed :value))
-         (version (plist-get parsed :version))
-         (matches (net-ip-matching-blocks value version)))
+         (version (plist-get parsed :version)))
     (net-insert-heading "Classification")
     (if (null matches)
         (net-insert-field "Class" "Global unicast (no special-purpose block)")
@@ -625,7 +625,7 @@ Return nil when the range is not exactly one aligned prefix block."
                                 (format "%s - %s"
                                         (net-ip-format start version)
                                         (net-ip-format end version)))))))
-      (net-insert-text "Database" (net-asn-ip-description file)))))
+      (net-insert-text "Database" (net-asn-ip-description file version)))))
 
 (defun net-ip--display ()
   "Render the IP address in the current buffer."
@@ -637,7 +637,7 @@ Return nil when the range is not exactly one aligned prefix block."
                              version
                              (if best (plist-get best :name) "global unicast")))
     (net-ip--insert-address-section parsed)
-    (net-ip--insert-classification-section parsed)
+    (net-ip--insert-classification-section parsed matches)
     (net-ip--insert-reverse-section parsed)
     (net-ip--insert-related-section parsed)
     (net-ip--insert-geo-section parsed)

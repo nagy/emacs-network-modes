@@ -50,9 +50,11 @@
 ;;   net-asn-ip-database-file-v6   iptoasn ip2asn-v6.tsv.gz
 ;;
 ;; Each file is a tab separated range table sorted by start address.
-;; `net-asn-ip-entry' decompresses the file, then binary searches the
-;; line starts, so one lookup parses about twenty rows instead of the
-;; whole file.
+;; `net-asn-ip-entry' binary searches the line starts, so one lookup
+;; parses about twenty rows instead of the whole file.  The Nix
+;; derivation packs the same ranges into a fixed-width table
+;; (`tools/pack-network-data.py'), which needs no decompression and no
+;; line scan.  A raw TSV or gzip file still works.
 ;;
 ;; Entry points:
 ;;
@@ -86,21 +88,21 @@ Used to report the registry block of an AS number."
   :type '(choice (const :tag "None" nil) file)
   :group 'net)
 
-(defcustom net-asn-ip-database-file (net-data-file "ip2asn-v4.tsv.gz")
-  "IPv4 to AS number range file, or nil.
-Each tab separated line holds start address, end address, AS number,
-country code and AS description.  The file must be sorted by start
-address.  Download it from https://iptoasn.com.  The gzip form stays
-compressed, so the option accepts the upstream file as it is."
+(defcustom net-asn-ip-database-file (net-data-file "asn-ranges-v4.bin")
+  "IPv4 to AS number range table, or nil.
+The Nix package ships a packed table.  A tab separated file with
+start address, end address, AS number, country code and AS
+description works too, sorted by start address, and the gzip form
+stays compressed.  Download it from https://iptoasn.com."
   :type '(choice (const :tag "None" nil) file)
   :group 'net)
 
-(defcustom net-asn-ip-database-file-v6 (net-data-file "ip2asn-v6.tsv.gz")
-  "IPv6 to AS number range file, or nil.
-Each tab separated line holds start address, end address, AS number,
-country code and AS description.  The file must be sorted by start
-address.  Download it from https://iptoasn.com.  The gzip form stays
-compressed, so the option accepts the upstream file as it is."
+(defcustom net-asn-ip-database-file-v6 (net-data-file "asn-ranges-v6.bin")
+  "IPv6 to AS number range table, or nil.
+The Nix package ships a packed table.  A tab separated file with
+start address, end address, AS number, country code and AS
+description works too, sorted by start address, and the gzip form
+stays compressed.  Download it from https://iptoasn.com."
   :type '(choice (const :tag "None" nil) file)
   :group 'net)
 
@@ -328,23 +330,61 @@ lookup path scans the file for one object and needs no hash table."
 
 ;;; IP addresses to AS numbers
 
+(defvar net-asn--range-cache nil
+  "Cons of (KEY . TEXT) with the decompressed IP to AS range table.")
+
 (defun net-asn--ip-file (version)
   "Return the IP to AS number range file of VERSION, or nil."
   (if (= version 4)
       net-asn-ip-database-file
     net-asn-ip-database-file-v6))
 
+(defun net-asn--ip-table (version)
+  "Return the packed IP to AS range table of VERSION, or nil."
+  (when-let* ((file (net-asn--ip-file version)))
+    (net--binary-table file (list :width (if (= version 4) 4 16)
+                                  :numbers 1
+                                  :strings 2))))
+
+(defun net-asn--gzip-file-p (file)
+  "Return non-nil when FILE starts with the gzip magic bytes.
+The suffix is not trusted, because a Nix file input keeps no
+upstream name."
+  (when (net-data-available-p file)
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally file nil 0 2)
+      (equal (buffer-string) (unibyte-string 31 139)))))
+
 (defun net-asn--insert-range-file (file)
   "Insert the range table FILE into the current buffer.
 Decompress a gzip file here, so the lookup does not depend on
-`auto-compression-mode'."
-  (if (string-suffix-p ".gz" file)
+`auto-compression-mode'.  The gzip magic bytes decide, not the
+suffix."
+  (if (net-asn--gzip-file-p file)
       (progn
         (set-buffer-multibyte nil)
         (insert-file-contents-literally file)
         (zlib-decompress-region (point-min) (point-max))
         (set-buffer-multibyte t))
     (insert-file-contents file)))
+
+(defun net-asn--range-text (file)
+  "Return the decompressed text of the range FILE.
+Decompress once and reuse the text while the file does not change,
+so a later lookup does not pay for the gzip pass again."
+  (let* ((attributes (file-attributes file))
+         (key (list file
+                    (file-attribute-modification-time attributes)
+                    (file-attribute-size attributes))))
+    (if (and net-asn--range-cache
+             (equal (car net-asn--range-cache) key))
+        (cdr net-asn--range-cache)
+      (let ((text (with-temp-buffer
+                    (net-asn--insert-range-file file)
+                    (buffer-string))))
+        (setq net-asn--range-cache (cons key text))
+        text))))
 
 (defun net-asn--range-fields ()
   "Return the fields of the range table row at point."
@@ -407,32 +447,42 @@ search the line starts, so a lookup parses about twenty rows."
 The entry is a plist with :asn, :country, :description, :start and
 :end.  Return nil when the database is missing or holds no covering
 range."
-  (let ((file (net-asn--ip-file version)))
-    (when (net-data-available-p file)
-      (with-temp-buffer
-        (net-asn--insert-range-file file)
-        (when-let* ((position (net-asn--search-row value)))
-          (goto-char position)
-          (let* ((fields (net-asn--range-fields))
-                 (start (net-asn--address-number (nth 0 fields)))
-                 (end (net-asn--address-number (nth 1 fields))))
-            (when (and start end (<= start value) (<= value end))
-              (list :asn (string-to-number (nth 2 fields))
-                    :country (nth 3 fields)
-                    :description (nth 4 fields)
-                    :start start
-                    :end end))))))))
+  (if-let* ((table (net-asn--ip-table version)))
+      (when-let* ((index (net--binary-find table value)))
+        (list :asn (net--binary-number table index 0)
+              :country (net--binary-string table index 0)
+              :description (net--binary-string table index 1)
+              :start (net--binary-start table index)
+              :end (net--binary-end table index)))
+    (let ((file (net-asn--ip-file version)))
+      (when (net-data-available-p file)
+        (with-temp-buffer
+          (insert (net-asn--range-text file))
+          (when-let* ((position (net-asn--search-row value)))
+            (goto-char position)
+            (let* ((fields (net-asn--range-fields))
+                   (start (net-asn--address-number (nth 0 fields)))
+                   (end (net-asn--address-number (nth 1 fields))))
+              (when (and start end (<= start value) (<= value end))
+                (list :asn (string-to-number (nth 2 fields))
+                      :country (nth 3 fields)
+                      :description (nth 4 fields)
+                      :start start
+                      :end end)))))))))
 
-(defun net-asn-ip-description (file)
-  "Return a one-line description of the range FILE.
+(defun net-asn-ip-description (file version)
+  "Return a one-line description of the range FILE of VERSION.
 A file in the Nix store has an epoch modification time, so report it
 as a pinned copy instead of a meaningless date."
   (let* ((attributes (file-attributes file))
          (time (file-attribute-modification-time attributes))
+         (count (plist-get (net-asn--ip-table version) :count))
          (date (if (time-less-p time (encode-time 86400 0 0 1 1 1980))
                    "pinned copy"
                  (format-time-string "%Y-%m-%d" time))))
-    (format "%s, %s" (file-name-nondirectory file) date)))
+    (if count
+        (format "%s, %s ranges, %s" (file-name-nondirectory file) count date)
+      (format "%s, %s" (file-name-nondirectory file) date))))
 
 ;;; Display
 

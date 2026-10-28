@@ -19,7 +19,7 @@ network, and it runs only when invoked.
 | ------------------- | ----------------------------------------------------------------------- |
 | `network-modes.el`  | Entry point: requires the base mode and all six modes                   |
 | `net-mode.el`       | Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP         |
-| `net-geo.el`        | Country lookup from PDDL range CSVs, with binary search cache           |
+| `net-geo.el`        | Country lookup from packed range tables or PDDL CSVs                    |
 | `net-ip.el`         | IP parsing/formatting, blocks, registry reader, origin AS, IP mode      |
 | `net-cidr.el`       | Prefix arithmetic, CIDR mode                                            |
 | `net-mac.el`        | MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup             |
@@ -30,9 +30,10 @@ network, and it runs only when invoked.
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (75 tests)                                                    |
+| `net-tests.el`      | ERT suite (84 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
+| `tools/pack-network-data.py` | Packs the range databases into fixed-width tables              |
 | `README.org`        | User documentation                                                      |
 | `LICENSE`           | AGPL-3.0-or-later                                                       |
 
@@ -109,13 +110,14 @@ editing a database file invalidates the cache without a restart:
 | Reader                       | Format                   | Cache variable                    |
 | ---------------------------- | ------------------------ | --------------------------------- |
 | `net--read-csv-file`         | CSV with multi-line cells| none, the callers cache           |
+| `net--binary-table`          | Packed range table       | `net--binary-cache`               |
 | `net-geo--data`              | 3-column CSV ranges      | `net-geo--cache`                  |
 | `net-ip--registry-entries`   | IANA special-purpose CSV | `net-ip--registry-cache`          |
 | `net-mac--registry-text`     | IEEE registry CSV        | `net-mac--registry-cache`         |
 | `net-mac--manuf-table`       | Wireshark manuf          | `net-mac--manuf-cache`            |
 | `net-asn--registry-rows`     | IANA AS numbers CSV      | `net-asn--registry-cache`         |
 | `net-asn-entry`              | ipverse as-metadata JSON | `net-asn--memo`, `net-asn--table` |
-| `net-asn-ip-entry`           | iptoasn range TSV (gzip) | none, binary search per lookup    |
+| `net-asn--range-text`        | iptoasn range TSV (gzip) | `net-asn--range-cache`            |
 | `net-domain--psl-load`       | Public Suffix List       | `net-domain--psl-cache`           |
 | `net-vsock--services`        | IANA service names CSV   | `net-vsock--service-cache`        |
 
@@ -127,17 +129,46 @@ checks that shape once per lookup, and any other file falls back to
 `net-asn--table`, the full parse.  `net-asn-load-database` builds that
 table for bulk sessions.
 
-The IP to AS number tables are large too, and they are sorted, so
-`net-asn-ip-entry` needs no cache.  `net-asn--insert-range-file`
-decompresses the gzip file into a temporary buffer, and
-`net-asn--search-row` binary searches the line starts there, so a
-lookup parses about twenty rows.  The reader gunzips with
+The IP to AS number tables are large too, and they are sorted.  The
+Nix derivation packs them into a fixed-width table, and
+`net-asn-ip-entry` binary searches it.  A raw upstream TSV or gzip file
+still works: `net-asn--range-text` decompresses it once into
+`net-asn--range-cache`, and `net-asn--search-row` binary searches the
+line starts, so a lookup parses about twenty rows.  The reader gunzips
+when the file starts with the gzip magic, not when the name ends in
+`.gz`, because a Nix file input keeps no upstream name.  It uses
 `zlib-decompress-region` instead of `insert-file-contents`, so a user
 who turned off `auto-compression-mode` still gets an answer.  The
 search keeps `low` on a line start, because a midpoint can fall inside
 the current low line.  `net-ip--range-prefix` turns the covering
 range into a prefix only when the range is a single aligned block, so
 an aggregated iptoasn row renders as a range.
+
+### Packed range tables
+
+`tools/pack-network-data.py` runs at build time and writes four files:
+`geo-ranges-v4.bin`, `geo-ranges-v6.bin`, `asn-ranges-v4.bin` and
+`asn-ranges-v6.bin`.  The GeoIP CSV parse and the gzip pass therefore
+leave the run time path: the first IP buffer went from 9.2 seconds to
+0.05 seconds on IPv4, and from 13.5 seconds to 0.03 seconds on IPv6.
+
+The layout is a 20-byte header, then fixed-width rows, then a string
+table:
+
+- header: magic `NETR`, format version u16, address width u8, number
+  column count u8, string column count u8, three reserved bytes, row
+  count u32, string table offset u32
+- row: start address and end address as big-endian bytes, one u32 per
+  number column, one u32 per string column
+- string table: count u32, then each UTF-8 string with a u16 length
+
+The header carries the layout, so `net--binary-table` takes the
+expected width and column counts and signals an error on a mismatch.
+Bump the format version in `net--binary-version` and in the packer
+together.  A file without the magic bytes is not a packed table, so the
+raw CSV and TSV readers stay in use for users outside Nix.  The flake
+check `checks.data-tables` runs both readers against the real
+derivation.
 
 ### Address arithmetic
 
@@ -264,7 +295,7 @@ The suite uses temporary files for every database, so it never depends
 on the store paths of the Nix build.  Test files carry the `-tests.el`
 suffix, which package-build and the lint gates exclude.
 
-`nix flake check` runs three gates:
+`nix flake check` runs four gates:
 
 - `packages.network-modes`: `melpaBuild` byte-compiles with warnings as
   errors, then runs both ERT suites in its `checkPhase`.  The build
@@ -275,6 +306,9 @@ suffix, which package-build and the lint gates exclude.
   `net-` prefix, so the check whitelists it.
 - `checks.checkdoc`: docstring conventions.  checkdoc exits 0 on
   findings, so the check fails on non-empty output.
+- `checks.data-tables`: runs the packed table readers against the real
+  data derivation, so the packer and the Elisp decoder cannot drift
+  apart unnoticed.
 
 ## Conventions
 
@@ -309,6 +343,11 @@ suffix, which package-build and the lint gates exclude.
   a symlink in the data derivation inside `flake.nix`, and a `defcustom` defaulting to
   `(net-data-file "upstream-name")`.  The IEEE registries keep their
   upstream file names inside `net-mac-registry-directory`.
+- A derived file carries its own name, not the upstream one.  The four
+  packed range tables come from `tools/pack-network-data.py`, whose
+  format and version live beside `net--binary-version` in `net-mode.el`.
+  Keep the raw upstream file reachable too, so the CSV and TSV readers
+  stay testable.
 - MAC vendor data uses the IEEE registries.  MA-S and IAB share the
   36-bit prefix length and CID shares 24 bits with MA-L, so the lookup
   tries the files in `net-mac--registry-files` order.  The optional
