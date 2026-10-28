@@ -83,6 +83,7 @@ Return a plist with :version, :prefix, :value, :network, :last and
 
 (defun net-cidr-canonical (parsed)
   "Return the canonical string of the parsed prefix PARSED."
+  (declare (pure t) (side-effect-free t))
   (format "%s/%d"
           (net-ip-format (plist-get parsed :network)
                          (plist-get parsed :version))

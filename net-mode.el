@@ -372,6 +372,7 @@ window edge instead of putting one button on each line."
   "Split LINE at commas into a list of fields.
 Double quotes protect commas and unquote doubled quotes.  IANA
 registries use this shape for columns that hold RFC lists."
+  (declare (pure t) (side-effect-free t))
   (let ((fields nil)
         (field nil)
         (in-quotes nil)

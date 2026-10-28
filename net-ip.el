@@ -151,6 +151,7 @@ can be a dotted quad and expands to two 16-bit groups."
 
 (defun net-ip--groups-value (groups)
   "Return the integer value of the 16-bit GROUPS."
+  (declare (pure t) (side-effect-free t))
   (let ((value 0))
     (dolist (group groups value)
       (setq value (logior (ash value 16) group)))))
@@ -200,6 +201,7 @@ Return a plist with :version, :value and :zone, or nil."
 
 (defun net-ip--format-ipv4 (value)
   "Return the dotted-quad form of the IPv4 integer VALUE."
+  (declare (pure t) (side-effect-free t))
   (mapconcat (lambda (shift)
                (number-to-string (logand (ash value (- shift)) #xff)))
              '(24 16 8 0)
@@ -207,6 +209,7 @@ Return a plist with :version, :value and :zone, or nil."
 
 (defun net-ip--groups (value)
   "Return the eight 16-bit groups of the IPv6 integer VALUE."
+  (declare (pure t) (side-effect-free t))
   (let (groups)
     (dotimes (index 8)
       (push (logand (ash value (- (* 16 (- 7 index)))) #xffff) groups))
@@ -216,6 +219,7 @@ Return a plist with :version, :value and :zone, or nil."
   "Return the compressed lowercase form of the IPv6 integer VALUE.
 The longest run of at least two zero groups becomes \"::\", as
 RFC 5952 requires."
+  (declare (pure t) (side-effect-free t))
   (let* ((groups (net-ip--groups value))
          (index 0)
          (best-start nil)
@@ -243,18 +247,21 @@ RFC 5952 requires."
 
 (defun net-ip--format-ipv6-full (value)
   "Return the fully expanded IPv6 form of the integer VALUE."
+  (declare (pure t) (side-effect-free t))
   (mapconcat (lambda (group) (format "%04x" group))
              (net-ip--groups value)
              ":"))
 
 (defun net-ip-format (value version)
   "Format the integer VALUE as an address of VERSION."
+  (declare (pure t) (side-effect-free t))
   (if (= version 4)
       (net-ip--format-ipv4 value)
     (net-ip--format-ipv6 value)))
 
 (defun net-ip-canonical (parsed)
   "Return the canonical string of the parsed address PARSED."
+  (declare (pure t) (side-effect-free t))
   (let ((text (net-ip-format (plist-get parsed :value)
                              (plist-get parsed :version))))
     (if-let* ((zone (plist-get parsed :zone)))
@@ -296,11 +303,13 @@ The plist holds :version, :prefix, :start and :last."
 
 (defun net-ip--bits (version)
   "Return the number of address bits of VERSION."
+  (declare (pure t) (side-effect-free t))
   (if (= version 4) net-ip--ipv4-bits net-ip--ipv6-bits))
 
 (defun net-ip-in-block-p (value version block)
   "Return non-nil when VALUE of VERSION falls inside BLOCK.
 BLOCK is a plist as returned by `net-ip--block'."
+  (declare (pure t) (side-effect-free t))
   (and block
        (= version (plist-get block :version))
        (<= (plist-get block :start) value)
@@ -572,6 +581,7 @@ multicast blocks stay classified."
 (defun net-ip--range-prefix (start end version)
   "Return the prefix text of the address range START to END of VERSION.
 Return nil when the range is not exactly one aligned prefix block."
+  (declare (pure t) (side-effect-free t))
   (let* ((size (1+ (- end start)))
          (bits (if (= version 4) net-ip--ipv4-bits net-ip--ipv6-bits))
          (value size)

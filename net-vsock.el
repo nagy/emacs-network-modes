@@ -106,6 +106,7 @@ vsock://CID:PORT with decimal or hexadecimal numbers."
 
 (defun net-vsock-canonical (parsed)
   "Return the canonical string of the parsed vsock address PARSED."
+  (declare (pure t) (side-effect-free t))
   (format "%d:%d" (plist-get parsed :cid) (plist-get parsed :port)))
 
 ;;; Services

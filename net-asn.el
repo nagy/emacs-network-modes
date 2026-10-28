@@ -135,6 +135,7 @@ compressed, so the option accepts the upstream file as it is."
 (defun net-asn--asdot-number (high low)
   "Return the AS number of the ASDOT parts HIGH and LOW, or nil.
 A nil LOW keeps HIGH as asplain instead of splitting it."
+  (declare (pure t) (side-effect-free t))
   (if (null low)
       (string-to-number high)
     (let ((high-value (string-to-number high))
@@ -166,15 +167,18 @@ asdot (\"1.10\")."
 
 (defun net-asn-canonical (parsed)
   "Return the canonical string of the parsed AS number PARSED."
+  (declare (pure t) (side-effect-free t))
   (format "AS%d" (plist-get parsed :asn)))
 
 (defun net-asn-asdot (asn)
   "Return the asdot form of ASN, or nil for 16-bit numbers."
+  (declare (pure t) (side-effect-free t))
   (when (> asn 65535)
     (format "%d.%d" (/ asn 65536) (% asn 65536))))
 
 (defun net-asn-classification (asn)
   "Return (NAME . RFC) describing the reservation status of ASN."
+  (declare (pure t) (side-effect-free t))
   (cond
    ((= asn 0) '("Reserved" . "RFC 7607"))
    ((= asn 23456) '("AS_TRANS (4-byte AS transition)" . "RFC 6793"))

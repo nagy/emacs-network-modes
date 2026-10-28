@@ -1018,5 +1018,23 @@ the start of the buffer."
       (should (eq (car target) 'net-address))
       (should (equal (cadr target) "192.0.2.1")))))
 
+;;; Declarations
+
+(ert-deftest net-tests-pure-helpers ()
+  "The side effect free helpers keep both properties."
+  (dolist (symbol '(net-ip--groups-value net-ip--groups net-ip--bits
+                    net-ip-in-block-p net-ip--format-ipv4
+                    net-ip--format-ipv6 net-ip--format-ipv6-full
+                    net-ip-format net-ip-canonical net-ip--range-prefix
+                    net-cidr-canonical net-domain--punycode-digit
+                    net-domain--punycode-adapt
+                    net-domain--punycode-encode net-mac-hex
+                    net-mac--prefix-string net-asn--asdot-number
+                    net-asn-canonical net-asn-asdot
+                    net-asn-classification net-vsock-canonical
+                    net-geo--search net--split-csv-line))
+    (should (get symbol 'pure))
+    (should (get symbol 'side-effect-free))))
+
 (provide 'net-tests)
 ;;; net-tests.el ends here

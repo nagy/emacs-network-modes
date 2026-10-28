@@ -30,7 +30,7 @@ network, and it runs only when invoked.
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (74 tests)                                                    |
+| `net-tests.el`      | ERT suite (75 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
 | `README.org`        | User documentation                                                      |
@@ -281,6 +281,13 @@ suffix, which package-build and the lint gates exclude.
 - Lines stay under 80 columns; docstrings wrap at the same width.
 - Parsers and formatters are pure.  Only renderers, commands and the
   database readers have side effects.
+- Side effect free helpers carry `(declare (pure t) (side-effect-free t))`:
+  the address formatters, the prefix and block arithmetic, the Punycode
+  encoder, `net--split-csv-line` and `net-asn-classification`.  A parser
+  that runs a regexp keeps no declaration, because `string-match`,
+  `split-string` and `string-trim` clobber the match data and
+  `case-fold-search` changes the result.  A reader must never carry one,
+  because it fills a cache.
 - `defcustom` names carry the `net-` prefix.  Public functions are
   `net-KIND-*`; internal helpers use `net--`.
 - Field labels and values render through the helpers in `net-mode.el`;

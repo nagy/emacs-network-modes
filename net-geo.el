@@ -121,6 +121,7 @@ not change."
 
 (defun net-geo--search (ranges address)
   "Return the country code of RANGES at ADDRESS."
+  (declare (pure t) (side-effect-free t))
   (let ((low 0)
         (high (1- (/ (length ranges) 3)))
         result)

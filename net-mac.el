@@ -123,10 +123,12 @@ Return a plist with :octets, :bits and :hex, or nil."
 
 (defun net-mac-hex (parsed)
   "Return the uppercase hex digits of the parsed address PARSED."
+  (declare (pure t) (side-effect-free t))
   (plist-get parsed :hex))
 
 (defun net-mac--prefix-string (hex count)
   "Format HEX as colon separated groups of up to COUNT digits."
+  (declare (pure t) (side-effect-free t))
   (let ((groups nil)
         (index 0))
     (while (< index count)

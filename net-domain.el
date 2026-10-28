@@ -67,12 +67,14 @@ The Nix package points this option at the nixpkgs copy."
 
 (defun net-domain--punycode-digit (digit)
   "Return the Punycode character of DIGIT."
+  (declare (pure t) (side-effect-free t))
   (if (< digit 26)
       (+ digit ?a)
     (+ (- digit 26) ?0)))
 
 (defun net-domain--punycode-adapt (delta numpoints first)
   "Return the adapted bias for DELTA, NUMPOINTS and FIRST."
+  (declare (pure t) (side-effect-free t))
   (setq delta (if first (/ delta 700) (/ delta 2)))
   (setq delta (+ delta (/ delta numpoints)))
   (let ((k 0))
@@ -84,6 +86,7 @@ The Nix package points this option at the nixpkgs copy."
 (defun net-domain--punycode-encode (string)
   "Return the Punycode encoding of STRING without the xn-- prefix.
 This implements RFC 3492.  The caller adds the prefix."
+  (declare (pure t) (side-effect-free t))
   (let* ((chars (string-to-list string))
          (length (length chars))
          (basic (cl-remove-if-not (lambda (char) (< char 128)) chars))
