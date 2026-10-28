@@ -131,6 +131,19 @@ their hashes.  The flake collects them in one derivation and substitutes
 every database without configuration.  The Public Suffix List comes from
 nixpkgs (=publicsuffix-list=).
 
+The package is overridable, so a consumer can build it for another
+Emacs:
+
+#+begin_src nix
+inputs.network-modes.packages.${system}.default.override {
+  emacs = pkgs.emacs-nox;
+}
+#+end_src
+
+The builder also takes =emacsPackages=, =melpaBuild=, =evil=, =data=
+and =version=.  An =emacs= override moves the default =emacsPackages=
+and =evil= with it.
+
 Upstream licences of the pinned data: IANA registries are public data,
 as-metadata is CC0 1.0, ip-location-db user-country is PDDL 1.0, the
 Public Suffix List is MPL 2.0, and the IEEE registries come from the

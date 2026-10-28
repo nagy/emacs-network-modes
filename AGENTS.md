@@ -184,6 +184,21 @@ nix fmt                    # nixfmt via treefmt
 nix flake update           # refresh pinned database files
 ```
 
+The package is `lib.makeOverridable`, so a consumer can substitute the
+Emacs, its package set, the build function, the evil package or the
+database derivation:
+
+```nix
+inputs.network-modes.packages.${system}.default.override {
+  emacs = pkgs.emacs-nox;
+}
+```
+
+The flake passes the commit-derived version to the builder, because a
+plain import of the expression cannot know it.  The builder defaults to
+`0.1.0`, follows an `emacs` override with `emacsPackages` and `evil`,
+and takes any extra database derivation through `data`.
+
 Byte-compile with warnings as errors:
 
 ```sh

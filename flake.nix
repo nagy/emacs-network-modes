@@ -134,12 +134,6 @@
                   $out/public_suffix_list.dat
               '';
 
-          # The optional net-evil.el layer needs evil to compile and
-          # test, but the package must not depend on it.  Supply the
-          # elisp directory to the build only, never through
-          # packageRequires.
-          evil = pkgs.emacsPackages.evil;
-
           # Date of the flake source, folded into the version string.
           # A fresh repository without commits falls back to the epoch,
           # which keeps Nix versions parseable.
@@ -149,82 +143,106 @@
             + "-${builtins.substring 4 2 lastModifiedDate}"
             + "-${builtins.substring 6 2 lastModifiedDate}";
 
-          networkModes = pkgs.emacsPackages.melpaBuild {
-            pname = "network-modes";
-            inherit version;
+          # The package stays overridable, so a consumer can swap the
+          # Emacs, its package set, the build function, the evil package
+          # or the database derivation:
+          #   inputs.network-modes.packages.${system}.default.override {
+          #     emacs = pkgs.emacs-nox;
+          #   }
+          # The flake passes the commit-derived version, because a plain
+          # import of the expression cannot know it.
+          networkModes = lib.makeOverridable (
+            {
+              # One Emacs package set supplies every dependency, so an
+              # override of this argument moves all of them.
+              emacs ? pkgs.emacs,
+              emacsPackages ? emacs.pkgs,
+              melpaBuild ? emacsPackages.melpaBuild,
+              version ? "0.1.0",
+              # Evil reaches the build Emacs only.  net-evil.el needs the
+              # library to byte-compile, and the ERT suite tests its key
+              # bindings, so the build cannot drop it.  The package
+              # metadata still names no dependency.
+              evil ? emacs.pkgs.evil,
+              data ? networkModesData,
+            }:
+            melpaBuild {
+              pname = "network-modes";
+              inherit version;
 
-            src = lib.cleanSource ./.;
+              src = lib.cleanSource ./.;
 
-            # One substitution replaces every database option with a
-            # single stable prefix, so the Elisp defaults stay readable
-            # in the repository.
-            postPatch = ''
-              substituteInPlace net-mode.el \
-                --replace-fail '(defcustom net-data-directory nil' \
-                  '(defcustom net-data-directory "${networkModesData}"'
-            '';
-
-            # Warnings become errors: the cheapest lint the package gets.
-            turnCompilationWarningToError = true;
-
-            # The default installPhase compiles the packaged files with
-            # `-Q', so preInstall puts the evil elisp directory on
-            # EMACSLOADPATH for that compile.  Do not add evil to
-            # packageRequires: the dependency is optional for users of
-            # the package.
-            preInstall = ''
-              evil_dir=$(find ${evil}/share/emacs/site-lisp/elpa \
-                -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
-              export EMACSLOADPATH="$evil_dir:''${EMACSLOADPATH-}"
-            '';
-
-            # The ERT suite needs no external Elisp dependencies except
-            # evil, which net-evil-tests.el skips without.  The check
-            # phase supplies the evil elisp directory, so the optional
-            # layer is compiled and tested while the package stays free
-            # of the dependency.
-            doCheck = true;
-            checkPhase = ''
-              runHook preCheck
-              evil_load_path=$(find ${evil}/share/emacs/site-lisp/elpa \
-                -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
-              emacs --batch -L . -L "$evil_load_path" \
-                -l net-tests.el -l net-evil-tests.el \
-                -f ert-run-tests-batch-and-exit
-              runHook postCheck
-            '';
-
-            meta = {
-              description = "Read-only Emacs major modes for inspecting network addresses";
-              longDescription = ''
-                A set of major modes that display details about network
-                addresses: IPv4 and IPv6 addresses, CIDR prefixes, MAC
-                addresses, autonomous system numbers, domain names and
-                AF_VSOCK addresses.
-
-                Every mode derives from `special-mode', so the buffers stay
-                read-only.  Fields are copyable buttons and related
-                addresses open their own inspect buffer.  One command,
-                `net-inspect', sniffs the token at point and picks the
-                right mode.
-
-                The modes read pinned offline databases: the IANA
-                special-purpose address registries, the IANA AS number and
-                service name registries, the Public Suffix List, the
-                ipverse as-metadata JSON file, PDDL country range files and
-                the five IEEE MAC address registries.  Wireshark's manuf
-                file is an optional MAC vendor source.
-
-                RDAP lookups come from a buffer button or the `b' key and
-                only run when invoked.  Opening a buffer never contacts the
-                network.
+              # One substitution replaces every database option with a
+              # single stable prefix, so the Elisp defaults stay readable
+              # in the repository.
+              postPatch = ''
+                substituteInPlace net-mode.el \
+                  --replace-fail '(defcustom net-data-directory nil' \
+                    '(defcustom net-data-directory "${data}"'
               '';
-              license = lib.licenses.agpl3Plus;
-              homepage = "https://github.com/nagy/emacs-network-modes";
-              maintainers = with lib.maintainers; [ nagy ];
-              platforms = lib.platforms.unix;
-            };
-          };
+
+              # Warnings become errors: the cheapest lint the package gets.
+              turnCompilationWarningToError = true;
+
+              # The default installPhase compiles the packaged files with
+              # `-Q', so preInstall puts the evil elisp directory on
+              # EMACSLOADPATH for that compile.  Do not add evil to
+              # packageRequires: the dependency is optional for users of
+              # the package.
+              preInstall = ''
+                evil_dir=$(find ${evil}/share/emacs/site-lisp/elpa \
+                  -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+                export EMACSLOADPATH="$evil_dir:''${EMACSLOADPATH-}"
+              '';
+
+              # The ERT suite needs no external Elisp dependencies except
+              # evil, which net-evil-tests.el skips without.  The check
+              # phase supplies the evil elisp directory, so the optional
+              # layer is compiled and tested while the package stays free
+              # of the dependency.
+              doCheck = true;
+              checkPhase = ''
+                runHook preCheck
+                evil_load_path=$(find ${evil}/share/emacs/site-lisp/elpa \
+                  -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+                emacs --batch -L . -L "$evil_load_path" \
+                  -l net-tests.el -l net-evil-tests.el \
+                  -f ert-run-tests-batch-and-exit
+                runHook postCheck
+              '';
+
+              meta = {
+                description = "Read-only Emacs major modes for inspecting network addresses";
+                longDescription = ''
+                  A set of major modes that display details about network
+                  addresses: IPv4 and IPv6 addresses, CIDR prefixes, MAC
+                  addresses, autonomous system numbers, domain names and
+                  AF_VSOCK addresses.
+
+                  Every mode derives from `special-mode', so the buffers stay
+                  read-only.  Fields are copyable buttons and related
+                  addresses open their own inspect buffer.  One command,
+                  `net-inspect', sniffs the token at point and picks the
+                  right mode.
+
+                  The modes read pinned offline databases: the IANA
+                  special-purpose address registries, the IANA AS number and
+                  service name registries, the Public Suffix List, the
+                  ipverse as-metadata JSON file, PDDL country range files and
+                  the five IEEE MAC address registries.  Wireshark's manuf
+                  file is an optional MAC vendor source.
+
+                  RDAP lookups come from a buffer button or the `b' key and
+                  only run when invoked.  Opening a buffer never contacts the
+                  network.
+                '';
+                license = lib.licenses.agpl3Plus;
+                homepage = "https://github.com/nagy/emacs-network-modes";
+                maintainers = with lib.maintainers; [ nagy ];
+                platforms = lib.platforms.unix;
+              };
+            }
+          ) { inherit version; };
 
           # Sources without the test suite, used by the two lint gates.
           lintFiles = ''
