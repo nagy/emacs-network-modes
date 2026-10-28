@@ -42,15 +42,14 @@ A trailing sentence period does not hide the address.
 
 ** Key bindings
 
-| Key   | Command                        | Description                          |
-|-------+--------------------------------+--------------------------------------|
-| =g=   | =revert-buffer=                | render the value again               |
-| =q=   | =quit-window=                  | bury the inspect buffer              |
-| =w=   | =net-copy-value=               | copy the inspected value             |
-| =RET= | =push-button=                  | follow a field or address button     |
-| =TAB= | =forward-button=               | move to the next button              |
-| =b=   | =net-rdap=                     | fetch RDAP data for this value       |
-| =i=   | =net-inspect=                  | inspect the address at point         |
+| Key   | Command          | Description                      |
+|-------+------------------+----------------------------------|
+| =RET= | =push-button=    | follow a field or address button |
+| =q=   | =quit-window=    | bury the inspect buffer          |
+| =gr=  | =revert-buffer=  | render the value again           |
+| =w=   | =net-copy-value= | copy the inspected value         |
+| =b=   | =net-rdap=       | fetch RDAP data for this value   |
+| =i=   | =net-inspect=    | inspect the address at point     |
 
 Every field is a button: =RET= or the button's default action copies
 its value.  Related addresses (host prefix, parent prefix, embedded
@@ -122,7 +121,7 @@ user-country-ipv6.csv
 #+begin_src sh
 nix build                  # build the package
 nix flake check            # package, ERT suite, package-lint, checkdoc, treefmt
-nix develop                # Emacs with package-lint and embark
+nix develop                # Emacs with package-lint, embark and evil
 nix flake update           # refresh every pinned database
 #+end_src
 
@@ -140,7 +139,7 @@ repository.
 
 * Integrations
 
-Three opt-in modules sit beside the modes:
+Four opt-in modules sit beside the modes:
 
 - =ol-net.el= -- Org link types =net-ip:=, =net-cidr:=, =net-mac:=,
   =net-asn:=, =net-domain:=, =net-vsock:= and the dispatching =net:=
@@ -149,6 +148,8 @@ Three opt-in modules sit beside the modes:
   actions, enabled with =embark-net-mode=
 - =net-xref.el= -- xref backend, so =xref-find-definitions= on any
   address opens its inspect buffer
+- =net-evil.el= -- evil bindings for every inspect buffer, enabled
+  with =net-evil-mode=
 
 They are loaded on request:
 
@@ -158,7 +159,30 @@ They are loaded on request:
   (require 'embark-net)
   (embark-net-mode 1))
 (require 'net-xref)
+(require 'net-evil)
+(net-evil-mode 1)
 #+end_src
+
+** Evil
+
+=net-evil.el= is a separate file, so the modes need no evil.  Evil
+state maps take precedence over a major mode map, so the bindings give
+the commands of =net-mode-map= a state key:
+
+| Key        | Command                | Description                     |
+|------------+------------------------+---------------------------------|
+| =RET=        | =push-button=          | follow a field or address button |
+| =q=          | =quit-window=          | bury the inspect buffer         |
+| =gr=         | =revert-buffer=        | render the value again          |
+| =w=          | =net-copy-value=       | copy the inspected value        |
+| =b=          | =net-rdap=             | fetch RDAP data for this value  |
+| =i=          | =net-inspect=          | inspect the address at point    |
+
+The motions =j=, =k=, =gg=, =G=, =C-d=, =C-u=, =/=, =n= and =N= stay
+evil.  A read-only buffer has nothing to insert or paste, so the
+inspect commands win on =w=, =b= and =i=.  Visual state binds only
+=RET= and keeps its text objects.  =net-evil-mode= adds and removes
+the keys for every inspect buffer, existing or new.
 
 * Testing
 
@@ -171,6 +195,15 @@ vectors, Public Suffix List matching (plain, wildcard, exception and
 IDN rules), the vendor, registry, metadata and country lookups with
 temporary files, buffer rendering, RDAP placement, bookmarks and the
 integration modules.
+
+The evil tests skip themselves when evil is absent.  Add the evil
+elisp directory to the load path to run them:
+
+#+begin_src sh
+emacs -Q --batch -L . -L "$EVIL_DIR" \
+  -l net-tests.el -l net-evil-tests.el \
+  -f ert-run-tests-batch-and-exit
+#+end_src
 
 * Conventions
 

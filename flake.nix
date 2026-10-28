@@ -134,6 +134,12 @@
                   $out/public_suffix_list.dat
               '';
 
+          # The optional net-evil.el layer needs evil to compile and
+          # test, but the package must not depend on it.  Supply the
+          # elisp directory to the build only, never through
+          # packageRequires.
+          evil = pkgs.emacsPackages.evil;
+
           # Date of the flake source, folded into the version string.
           # A fresh repository without commits falls back to the epoch,
           # which keeps Nix versions parseable.
@@ -161,13 +167,30 @@
             # Warnings become errors: the cheapest lint the package gets.
             turnCompilationWarningToError = true;
 
-            # The ERT suite has no external Elisp dependencies (org,
-            # xref, json and bookmark ship with Emacs), so a plain
-            # `-L .' batch Emacs can load it from the source tree.
+            # The default installPhase compiles the packaged files with
+            # `-Q', so preInstall puts the evil elisp directory on
+            # EMACSLOADPATH for that compile.  Do not add evil to
+            # packageRequires: the dependency is optional for users of
+            # the package.
+            preInstall = ''
+              evil_dir=$(find ${evil}/share/emacs/site-lisp/elpa \
+                -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+              export EMACSLOADPATH="$evil_dir:''${EMACSLOADPATH-}"
+            '';
+
+            # The ERT suite needs no external Elisp dependencies except
+            # evil, which net-evil-tests.el skips without.  The check
+            # phase supplies the evil elisp directory, so the optional
+            # layer is compiled and tested while the package stays free
+            # of the dependency.
             doCheck = true;
             checkPhase = ''
               runHook preCheck
-              emacs --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
+              evil_load_path=$(find ${evil}/share/emacs/site-lisp/elpa \
+                -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+              emacs --batch -L . -L "$evil_load_path" \
+                -l net-tests.el -l net-evil-tests.el \
+                -f ert-run-tests-batch-and-exit
               runHook postCheck
             '';
 
@@ -273,10 +296,12 @@
               '';
 
           devShells.default = pkgs.mkShell {
+            # Evil comes along for the optional net-evil.el layer.
             packages = [
               (pkgs.emacsPackages.emacsWithPackages (p: [
                 p.package-lint
                 p.embark
+                p.evil
               ]))
               pkgs.nix
             ];

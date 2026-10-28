@@ -33,10 +33,11 @@
 ;;   M-x net-inspect
 ;;
 ;; The optional integrations stay separate, because they pull in Org,
-;; Embark or a global xref hook:
+;; Embark, evil or a global xref hook:
 ;;
 ;;   (require 'ol-net)
 ;;   (require 'embark-net)
+;;   (require 'net-evil)
 ;;   (require 'net-xref)
 
 ;;; Code:

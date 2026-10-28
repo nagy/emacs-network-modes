@@ -15,33 +15,37 @@ network, and it runs only when invoked.
 
 ## Files
 
-| File               | Purpose                                                           |
-| ------------------ | ----------------------------------------------------------------- |
-| `network-modes.el` | Entry point: requires the base mode and all six modes             |
-| `net-mode.el`      | Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP   |
-| `net-geo.el`       | Country lookup from PDDL range CSVs, with binary search cache     |
-| `net-ip.el`        | IP parsing/formatting, special-purpose blocks, registry reader, IP mode |
-| `net-cidr.el`      | Prefix arithmetic, CIDR mode                                      |
-| `net-mac.el`       | MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup       |
-| `net-asn.el`       | AS number parsing, IANA registry, ipverse metadata, ASN mode      |
-| `net-domain.el`    | Domain parsing, Punycode encoder, PSL lookup, domain mode         |
-| `net-vsock.el`     | AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode |
-| `ol-net.el`        | Opt-in Org link types (`net-*:` and `net:`)                       |
-| `embark-net.el`    | Opt-in Embark target and actions (`embark-net-mode`)              |
-| `net-xref.el`      | Opt-in xref backend                                               |
-| `net-tests.el`     | ERT suite (63 tests)                                              |
-| `flake.nix`        | Database inputs and derivation, `melpaBuild`, outputs and checks  |
-| `README.org`       | User documentation                                                |
-| `LICENSE`          | AGPL-3.0-or-later                                                 |
+| File                | Purpose                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| `network-modes.el`  | Entry point: requires the base mode and all six modes                   |
+| `net-mode.el`       | Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP         |
+| `net-geo.el`        | Country lookup from PDDL range CSVs, with binary search cache           |
+| `net-ip.el`         | IP parsing/formatting, special-purpose blocks, registry reader, IP mode |
+| `net-cidr.el`       | Prefix arithmetic, CIDR mode                                            |
+| `net-mac.el`        | MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup             |
+| `net-asn.el`        | AS number parsing, IANA registry, ipverse metadata, ASN mode            |
+| `net-domain.el`     | Domain parsing, Punycode encoder, PSL lookup, domain mode               |
+| `net-vsock.el`      | AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode       |
+| `ol-net.el`         | Opt-in Org link types (`net-*:` and `net:`)                             |
+| `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
+| `net-xref.el`       | Opt-in xref backend                                                     |
+| `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
+| `net-tests.el`      | ERT suite (63 tests)                                                    |
+| `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
+| `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
+| `README.org`        | User documentation                                                      |
+| `LICENSE`           | AGPL-3.0-or-later                                                       |
 
 ## Dependencies
 
 Emacs 31.1 or newer.  All Elisp dependencies are built in: `bookmark`,
 `button`, `cl-lib`, `json`, `url`, `seq`, `xref` and (for `ol-net.el`)
 `ol`.  External Elisp packages are optional: `embark` for
-`embark-net.el`, `package-lint` for the lint check.  `embark-net.el`
-does not register at load time; the user enables the global minor mode
-`embark-net-mode` after Embark loads.
+`embark-net.el`, `evil` for `net-evil.el`, `package-lint` for the lint
+check.  `embark-net.el` does not register at load time; the user
+enables the global minor mode `embark-net-mode` after Embark loads.
+`net-evil.el` requires evil, but `Package-Requires` stays free of it,
+so a user without evil installs nothing extra.
 
 Optional runtime data is listed in README.org.  No database is vendored
 in the repository; the flake pins them as file inputs.
@@ -146,12 +150,36 @@ name, type, country, addresses, status, events, entities and remarks.
 A buffer-local `net--rdap-in-flight` flag prevents duplicate requests.
 No automatic refresh or timer may call this command.
 
+### Evil
+
+`net-evil.el` is a second library, so the modes never require evil.
+It requires evil and `net-mode`, and it binds keys in normal and
+visual state only.
+
+Evil state maps take precedence over a major mode map, so `RET`, `q`,
+`w`, `b` and `i` would run an evil command instead of the inspect
+command.  The bindings put the commands of `net-mode-map` back:
+`RET` pushes a button, `q` quits the window, `gr` reverts, `w` copies
+the value, `b` fetches RDAP and `i` inspects the address at point.
+The motions `j`, `k`, `gg`, `G`, `C-d`, `C-u`, `/`, `n` and `N` stay
+evil.  Visual state binds only `RET`, because it needs its text
+objects.
+
+`net-evil-keys` and `net-evil-visual-keys` hold the key tables.
+`net-evil--bind` feeds them to `evil-define-minor-mode-key` for the
+private minor mode `net-evil-local-mode`.  `net-evil-mode` is the
+global switch.  It adds `net-evil--enable-buffer` to
+`after-change-major-mode-hook`, because the six address modes derive
+from `net-mode`, and turns the local mode on in every existing inspect
+buffer.  Turning it off removes the hook and the local mode, so the
+buffer falls back to `net-mode-map`.
+
 ## Building
 
 ```sh
 nix build                  # package
 nix flake check            # package + ERT + package-lint + checkdoc + treefmt
-nix develop                # Emacs with package-lint and embark
+nix develop                # Emacs with package-lint, embark and evil
 nix fmt                    # nixfmt via treefmt
 nix flake update           # refresh pinned database files
 ```
@@ -165,10 +193,22 @@ for f in net-*.el ol-net.el embark-net.el; do
 done
 ```
 
+`net-evil.el` needs evil on the load path.  Add the evil elisp
+directory with `-L` for that file, the way the flake check does.
+
 ## Testing
 
 ```sh
 emacs -Q --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
+```
+
+`net-evil-tests.el` needs evil on the load path.  Every test in it skips
+when evil is absent, so a checkout without evil still passes:
+
+```sh
+emacs -Q --batch -L . -L "$EVIL_DIR" \
+  -l net-tests.el -l net-evil-tests.el \
+  -f ert-run-tests-batch-and-exit
 ```
 
 The suite uses temporary files for every database, so it never depends
@@ -178,7 +218,10 @@ suffix, which package-build and the lint gates exclude.
 `nix flake check` runs three gates:
 
 - `packages.network-modes`: `melpaBuild` byte-compiles with warnings as
-  errors, then runs the ERT suite in its `checkPhase`.
+  errors, then runs both ERT suites in its `checkPhase`.  The build
+  supplies the evil elisp directory to `preInstall` and to the check,
+  because `net-evil.el` is optional and the package declares no evil
+  dependency.
 - `checks.package-lint`: ELPA policy.  The package shares the short
   `net-` prefix, so the check whitelists it.
 - `checks.checkdoc`: docstring conventions.  checkdoc exits 0 on
@@ -218,6 +261,25 @@ suffix, which package-build and the lint gates exclude.
 - Capture `match-string` results before calling another function: the
   callee may run `string-match` and clobber the match data.
 - Do not use `concat` with integer characters; use `char-to-string`.
+- `net-evil.el` follows the `net-` prefix and `evil-define-key` stays
+  unused: it is a macro, so a file that must compile without evil
+  cannot call it.  `net-evil--bind` calls the function
+  `evil-define-minor-mode-key` and `key-parse` converts every key
+  description, because `define-key` reads a plain string as literal
+  characters, so `"RET"` would bind three keys.  A new command in
+  `net-mode-map` belongs in `net-evil-keys`, and in
+  `net-evil-visual-keys` when visual state needs it.
+- `define-minor-mode` defines a defcustom, so a mode without
+  `:group 'net` fails byte-compilation with "fails to specify
+  containing group".  The evil minor-mode maps stay in
+  `evil-minor-mode-keymaps-alist` against the mode symbol, and Emacs
+  activates a map only while that symbol holds a value, so turning
+  `net-evil-local-mode` on or off needs no `evil-normalize-keymaps`
+  call.
+- `net-evil-tests.el` calls `evil-local-mode` and then reads
+  `key-binding`, so it tests what the keyboard sees, not the keymap
+  directly.  It declares every evil function it calls, so a checkout
+  without evil still byte-compiles.
 
 ## TODO
 
