@@ -22,6 +22,27 @@ opens.
 
 * Usage
 
+The package installs as =network-modes=, the same name as its entry
+library.  Requiring it loads the base mode and all six address modes,
+so every =net-*-inspect= command works without further setup:
+
+#+begin_src elisp
+(require 'network-modes)
+#+end_src
+
+With =use-package=, which also resolves the archive package through
+that name:
+
+#+begin_src elisp
+(use-package network-modes
+  :config
+  (setq net-buffer-name-format "*net-%s %s*"))
+#+end_src
+
+A caller that needs only the dispatcher loads the base library
+instead.  =net-inspect= then requires the six kind libraries on
+demand:
+
 #+begin_src elisp
 (require 'net-mode)
 #+end_src

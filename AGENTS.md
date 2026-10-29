@@ -17,7 +17,7 @@ network, and it runs only when invoked.
 
 | File                | Purpose                                                                 |
 | ------------------- | ----------------------------------------------------------------------- |
-| `network-modes.el`  | Entry point: requires the base mode and all six modes                   |
+| `network-modes.el`  | Entry library and package namesake: requires the base mode and all six modes, then provides the feature `network-modes`. `(use-package network-modes ...)` and `:ensure t` load and resolve through it. |
 | `net-mode.el`       | Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP         |
 | `net-geo.el`        | Country lookup from packed range tables or PDDL CSVs                    |
 | `net-ip.el`         | IP parsing/formatting, blocks, registry reader, origin AS, IP mode      |
@@ -30,7 +30,7 @@ network, and it runs only when invoked.
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (84 tests)                                                    |
+| `net-tests.el`      | ERT suite (85 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
 | `tools/pack-network-data.el` | Packs the range databases into fixed-width tables              |
@@ -340,6 +340,16 @@ suffix, which package-build and the lint gates exclude.
   because it fills a cache.
 - `defcustom` names carry the `net-` prefix.  Public functions are
   `net-KIND-*`; internal helpers use `net--`.
+- The package name equals the entry library: `pname =
+  "network-modes"` in the flake and `network-modes.el` in the source.
+  `use-package SYMBOL` expands to `(require SYMBOL)` and `:ensure t`
+  looks up the package of that name, so the two names must agree.
+  Users configure the suite through
+  `(use-package network-modes :config ...)`, and the README points
+  there first.  Do not point users at `net-mode` as the package door,
+  and do not require `network-modes` from another package file.  The
+  short `net-` prefix stays: the lint gate whitelists it, because the
+  package name spells the root out in full.
 - Field labels and values render through the helpers in `net-mode.el`;
   do not insert raw text in a renderer.  `net--insert-label` keeps at
   least one space after long labels.

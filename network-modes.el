@@ -26,11 +26,20 @@
 
 ;;; Commentary:
 
-;; Entry point of the package.  Loading this file loads the base mode
-;; and all six address modes, so `net-inspect' works immediately:
+;; Entry library of the package, so `(require 'network-modes)' and
+;; `(use-package network-modes ...)' load everything the modes need.
+;; The package name equals this feature, so `:ensure t' resolves the
+;; same name in the archive.
+;;
+;; Loading this file loads the base mode and all six address modes, so
+;; `net-inspect' works immediately:
 ;;
 ;;   (require 'network-modes)
 ;;   M-x net-inspect
+;;
+;; The base library `net-mode' loads on its own for a caller that needs
+;; only the dispatcher: `net-sniff' requires the kind libraries on
+;; demand.
 ;;
 ;; The optional integrations stay separate, because they pull in Org,
 ;; Embark, evil or a global xref hook:

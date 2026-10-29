@@ -40,6 +40,7 @@
 (require 'net-mac)
 (require 'net-mode)
 (require 'net-vsock)
+(require 'network-modes)
 (require 'embark-net)
 (require 'net-xref)
 
@@ -121,6 +122,29 @@ ROWS holds (START END NUMBERS TEXTS) lists.  This mirrors
 
 (defvar net-tests--file nil
   "Temporary file used by the tests.")
+
+;;; Entry library
+
+(ert-deftest net-entry-library ()
+  "The entry library loads every mode and provides its feature.
+`use-package network-modes' and its `:ensure' form need the feature
+to match the package name, and a bare require must register every
+kind for `net-inspect'."
+  (let ((source (with-temp-buffer
+                  (insert-file-contents
+                   (expand-file-name "network-modes.el"))
+                  (buffer-string))))
+    (should (string-match-p "^;;; network-modes\\.el --- " source))
+    (should (string-match-p
+             "^;; Package-Requires: ((emacs \"31\\.1\"))$" source))
+    (dolist (feature (cons 'net-mode net--kind-features))
+      (should (string-match-p
+               (format "^(require '%s)$" (regexp-quote (symbol-name feature)))
+               source)))
+    (should (string-match-p "^(provide 'network-modes)$" source)))
+  (should (featurep 'network-modes))
+  (dolist (kind '(ip cidr mac asn domain vsock))
+    (should (net-kind-property kind :open))))
 
 ;;; net-mode
 
