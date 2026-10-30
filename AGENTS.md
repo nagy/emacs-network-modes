@@ -7,11 +7,11 @@ IPv4/IPv6 addresses, CIDR prefixes, MAC addresses, autonomous system
 numbers, domain names and AF_VSOCK addresses.
 
 Every mode derives from `net-mode`, which derives from `special-mode`.
-The shared layer supplies one buffer per inspected value, a header line
-with a classification, copyable field buttons, cross-mode address
-buttons, bookmarks, the `net-inspect` dispatcher and the explicit
-`net-rdap` command.  RDAP is the only code path that touches the
-network, and it runs only when invoked.
+The shared layer supplies one buffer per inspected value, a report
+summary that reaches the JSON view, copyable field buttons, cross-mode
+address buttons, bookmarks, the `net-inspect` dispatcher and the
+explicit `net-rdap` command.  RDAP is the only code path that touches
+the network, and it runs only when invoked.
 
 ## Files
 
@@ -83,7 +83,9 @@ Every mode owns a pure `net-KIND-report` that returns one plist.  The
 plist carries `:summary`, `:sections` and, when the value has one, the
 `rdap` identity plus `:rdap-type` and `:rdap-key`.  `net-KIND--display`
 is a single call to `net--render-report`, so the report and the buffer
-cannot drift apart.
+cannot drift apart.  `:summary` shows up as the `summary` member of the
+JSON view and nowhere in the buffer, because every fact it names also
+reaches a field, a link or a record row.
 
 Report keys spell the JSON keys: `:objectClassName`, `:totalAddresses`,
 `:startAutnum`.  RDAP names (RFC 9083) win where the concept exists,
@@ -153,8 +155,9 @@ only the helpers in `net-mode.el`:
 - `net-insert-link-list` (comma separated buttons on one wrapping line)
 - `net-insert-text` (non-button, can span lines)
 - `net-insert-warning`
-- `net-set-summary` (header line classification, without the kind and
-  the value, which the buffer name and the mode line already show)
+- `net-set-summary` (classification for the JSON view only, because
+  the buffer body shows the same facts as fields, and the buffer name
+  and the mode line carry the kind and the value)
 
 `net-insert-heading` records each heading in the buffer-local
 `net--headings` list, and `net--imenu-index` turns that list into the

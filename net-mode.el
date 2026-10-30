@@ -35,7 +35,7 @@
 ;;
 ;;   - a buffer naming scheme, one buffer per inspected value
 ;;   - a read-only renderer with copyable field buttons
-;;   - a header line with a one-line classification
+;;   - a report summary per value, which names the classification
 ;;   - a bookmark handler per inspected value
 ;;   - a report per value, which draws the buffer and the JSON view
 ;;   - an explicit RDAP lookup command, never automatic
@@ -151,7 +151,9 @@ late answer still replaces that line."
   "Function that renders the inspected value into the current buffer.")
 
 (defvar-local net--summary nil
-  "One-line classification of the inspected value.")
+  "One-line classification of the inspected value.
+It reaches the JSON view only, because the buffer body shows the same
+facts as fields.")
 
 (defvar-local net--rdap-type nil
   "RDAP object type of the inspected value, or nil.
@@ -301,15 +303,11 @@ This is the `revert-buffer-function' of every inspect buffer."
     (set-buffer-modified-p nil)
     (net--json-redraw)))
 
-(defun net--header-line ()
-  "Return the header line string of the current inspect buffer."
-  (when net--summary
-    (concat " " (propertize net--summary 'face 'net-muted-face))))
-
 (defun net-set-summary (text)
-  "Set the header line summary of the current buffer to TEXT.
+  "Set the report summary of the current buffer to TEXT.
 TEXT names the classification only.  The buffer name and the mode line
-already show the kind and the value."
+already show the kind and the value, and the body shows every value
+that TEXT names, so no header line repeats it."
   (setq net--summary text))
 
 ;;; Rendering helpers
@@ -1162,7 +1160,6 @@ A derived mode sets `net--render-function' to a function that calls
   :group 'net
   (setq-local truncate-lines t)
   (setq-local revert-buffer-function #'net-refresh)
-  (setq-local header-line-format '(:eval (net--header-line)))
   (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
   ;; The rendered data comes from the network, not from a file: keep
