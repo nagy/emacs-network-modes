@@ -271,7 +271,8 @@ This is the `revert-buffer-function' of every inspect buffer."
           net--headings nil)
     (when net--render-function
       (funcall net--render-function))
-    (goto-char (point-min))))
+    (goto-char (point-min))
+    (set-buffer-modified-p nil)))
 
 (defun net--header-line ()
   "Return the header line string of the current inspect buffer."
@@ -731,7 +732,8 @@ still replaces the warning line."
           (net--rdap-begin-section)
           (net-insert-warning
            (format "Lookup timed out after %d seconds" net-rdap-timeout))
-          (net-insert-field "Source" (net--rdap-url)))))))
+          (net-insert-field "Source" (net--rdap-url))
+          (set-buffer-modified-p nil))))))
 
 (defun net--rdap-callback (buffer status)
   "Render the RDAP response in BUFFER.
@@ -769,7 +771,8 @@ STATUS is the `url-retrieve' status plist."
             (net-insert-warning
              (format "Lookup failed: %s" (or parse-error "empty answer"))))
            (t (net--rdap-render data)))
-          (net-insert-field "Source" (net--rdap-url)))))))
+          (net-insert-field "Source" (net--rdap-url))
+          (set-buffer-modified-p nil))))))
 
 (defun net--rdap-entity-name (entity)
   "Return the display name of the RDAP ENTITY alist."

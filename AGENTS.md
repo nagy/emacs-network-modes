@@ -30,7 +30,7 @@ network, and it runs only when invoked.
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (85 tests)                                                    |
+| `net-tests.el`      | ERT suite (86 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
 | `tools/pack-network-data.el` | Packs the range databases into fixed-width tables              |
@@ -81,8 +81,11 @@ to `example.org`.
 
 `net-display` creates or reuses `*net-KIND VALUE*`, calls the mode,
 stores `net--kind`, `net--value` and `net--render-function`, then calls
-`net-refresh`, which erases the buffer and runs the renderer.  Renderers
-use only the helpers in `net-mode.el`:
+`net-refresh`, which erases the buffer and runs the renderer.  The
+refresh clears the modified flag with `set-buffer-modified-p nil`, and
+both RDAP render paths clear it too, so a read-only inspect buffer
+never shows a modified flag and never prompts on quit.  Renderers use
+only the helpers in `net-mode.el`:
 
 - `net-insert-heading`
 - `net-insert-field` (button that copies the value)

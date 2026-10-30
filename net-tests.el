@@ -266,6 +266,7 @@ kind for `net-inspect'."
     (with-current-buffer first
       (should buffer-read-only)
       (should (derived-mode-p 'net-mode))
+      (should-not (buffer-modified-p))
       (should (equal net--value "192.0.2.1"))
       (should (string-match-p "Private" (buffer-string)))
       (should (string-match-p "11000000\\.00000000\\.00000010\\.00000001"
@@ -349,6 +350,16 @@ the start of the buffer."
       (should rdap)
       (should (> rdap reverse-name)))
     (should net--rdap-start)))
+
+(ert-deftest net-tests-buffer-unmodified ()
+  "Rendering and RDAP leave the read-only buffer unmodified."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (should-not (buffer-modified-p))
+    (set-buffer-modified-p t)
+    (net-refresh)
+    (should-not (buffer-modified-p))
+    (net--rdap-callback (current-buffer) '(:error (error "boom")))
+    (should-not (buffer-modified-p))))
 
 (ert-deftest net-tests-rdap-replaces-section ()
   "A second lookup replaces the earlier RDAP section."
