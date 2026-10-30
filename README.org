@@ -82,10 +82,12 @@ buffer.  Inspecting the same value twice reuses the same buffer.
 
 ** Buffers
 
-Buffer names follow =*net-KIND VALUE*=.  The header line repeats the
-kind, the value and a one-line classification.  =C-x r m= bookmarks an
-address, because the buffer installs a bookmark handler.  The section
-headings feed Imenu, so =imenu= lists every section of the buffer.
+Buffer names follow =*net-KIND VALUE*=.  The header line shows a
+one-line classification, for example =IPv4, Private-Use=.  The buffer
+name and the mode line already carry the kind and the value, so the
+header line does not repeat them.  =C-x r m= bookmarks an address,
+because the buffer installs a bookmark handler.  The section headings
+feed Imenu, so =imenu= lists every section of the buffer.
 
 ** RDAP
 

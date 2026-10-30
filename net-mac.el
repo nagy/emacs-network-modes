@@ -374,9 +374,12 @@ TABLE maps \"BITS:PREFIX\" to a plist with :mask, :short and :long."
   (let* ((parsed (net-mac-parse net--value))
          (octets (plist-get parsed :octets))
          (first (car octets)))
-    (net-set-summary (format "MAC %s, %s"
-                             (net-mac-canonical parsed)
-                             (if (= 1 (logand first #x01)) "multicast" "unicast")))
+    (net-set-summary
+     (format "%s, %s"
+             (if (= 1 (logand first #x01)) "multicast" "unicast")
+             (if (= 1 (logand (ash first -1) #x01))
+                 "locally administered"
+                 "universally administered (OUI)")))
     (net-mac--insert-address-section parsed)
     (net-mac--insert-flags-section parsed)
     (net-mac--insert-vendor-section parsed)

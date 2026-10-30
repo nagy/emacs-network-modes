@@ -183,10 +183,20 @@ vsock://CID:PORT with decimal or hexadecimal numbers."
 (defun net-vsock--display ()
   "Render the vsock address in the current buffer."
   (let* ((parsed (net-vsock-parse net--value))
-         (cid (plist-get parsed :cid)))
-    (net-set-summary (format "VSOCK %s"
-                             (or (alist-get cid net-vsock--cid-names)
-                                 (format "CID %d" cid))))
+         (cid (plist-get parsed :cid))
+         (port (plist-get parsed :port))
+         (service (and (net-data-available-p net-vsock-service-file)
+                       (car (net-vsock--services port))))
+         (name (and service (plist-get service :name))))
+    (net-set-summary
+     (format "%s, %s"
+             (or (alist-get cid net-vsock--cid-names)
+                 (format "CID %d" cid))
+             (if (and name (not (string-empty-p name)))
+                 name
+               (if (= port 4294967295)
+                   "VMADDR_PORT_ANY"
+                   "no IANA service name"))))
     (net-vsock--insert-address-section parsed)
     (net-vsock--insert-services-section parsed)
     (net-vsock--insert-structure-section)))

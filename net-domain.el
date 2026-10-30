@@ -335,11 +335,11 @@ rejected during parsing."
                                     (format ", ASCII %s" ascii)))))
       (cl-incf index))))
 
-(defun net-domain--insert-psl-section (parsed)
-  "Insert the Public Suffix List fields of PARSED."
-  (net-insert-heading "Public Suffix")
-  (if (not (net-data-available-p net-domain-psl-file))
-      (net-insert-text "List" "unset (customize `net-domain-psl-file')")
+(defun net-domain--psl-fields (parsed)
+  "Return the Public Suffix List fields of PARSED as a plist.
+Return nil when the list file is not available.  The plist holds
+`:suffix', `:labels', `:section' and `:registrable'."
+  (when (net-data-available-p net-domain-psl-file)
     (let* ((labels (plist-get parsed :labels))
            (count (length labels))
            (match (net-domain-public-suffix parsed))
@@ -350,13 +350,23 @@ rejected during parsing."
                           (mapconcat #'identity
                                      (last labels (1+ length))
                                      "."))))
-      (net-insert-field "Suffix" suffix)
-      (net-insert-field "Suffix labels" length)
-      (net-insert-field "Section"
-                        (cond ((eq table 'private) "private")
-                              ((eq table 'icann) "ICANN")
-                              (t "default rule (no match)")))
-      (if registrable
+      (list :suffix suffix
+            :labels length
+            :section (cond ((eq table 'private) "private")
+                           ((eq table 'icann) "ICANN")
+                           (t "default rule (no match)"))
+            :registrable registrable))))
+
+(defun net-domain--insert-psl-section (parsed)
+  "Insert the Public Suffix List fields of PARSED."
+  (net-insert-heading "Public Suffix")
+  (let ((fields (net-domain--psl-fields parsed)))
+    (if (null fields)
+        (net-insert-text "List" "unset (customize `net-domain-psl-file')")
+      (net-insert-field "Suffix" (plist-get fields :suffix))
+      (net-insert-field "Suffix labels" (plist-get fields :labels))
+      (net-insert-field "Section" (plist-get fields :section))
+      (if-let* ((registrable (plist-get fields :registrable)))
           (net-insert-link "Registrable domain" 'domain registrable)
         (net-insert-field "Registrable domain"
                           "the name is itself a public suffix")))))
@@ -364,7 +374,12 @@ rejected during parsing."
 (defun net-domain--display ()
   "Render the domain name in the current buffer."
   (let ((parsed (net-domain-parse net--value)))
-    (net-set-summary (format "Domain %s" (net-domain-ascii parsed)))
+    (when-let* ((fields (net-domain--psl-fields parsed)))
+      (net-set-summary
+       (if-let* ((registrable (plist-get fields :registrable)))
+           (format "suffix %s, registrable %s"
+                   (plist-get fields :suffix) registrable)
+         (format "suffix %s" (plist-get fields :suffix)))))
     (net-domain--insert-name-section parsed)
     (net-domain--insert-label-section parsed)
     (net-domain--insert-psl-section parsed)

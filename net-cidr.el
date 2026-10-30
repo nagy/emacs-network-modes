@@ -227,9 +227,8 @@ The narrowest entry comes first."
   (let* ((parsed (net-cidr-parse net--value))
          (matches (net-cidr-matching-entries parsed))
          (best (car matches)))
-    (net-set-summary (format "IPv%d /%d %s"
+    (net-set-summary (format "IPv%d, %s"
                              (plist-get parsed :version)
-                             (plist-get parsed :prefix)
                              (if best (plist-get best :name) "global unicast")))
     (net-cidr--insert-address-section parsed)
     (net-cidr--insert-classification-section parsed)

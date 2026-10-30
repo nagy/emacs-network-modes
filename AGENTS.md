@@ -90,7 +90,8 @@ use only the helpers in `net-mode.el`:
 - `net-insert-link-list` (comma separated buttons on one wrapping line)
 - `net-insert-text` (non-button, can span lines)
 - `net-insert-warning`
-- `net-set-summary` (header line classification)
+- `net-set-summary` (header line classification, without the kind and
+  the value, which the buffer name and the mode line already show)
 
 `net-insert-heading` records each heading in the buffer-local
 `net--headings` list, and `net--imenu-index` turns that list into the

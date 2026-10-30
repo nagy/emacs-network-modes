@@ -633,7 +633,7 @@ Return nil when the range is not exactly one aligned prefix block."
          (version (plist-get parsed :version))
          (matches (net-ip-matching-blocks (plist-get parsed :value) version))
          (best (car matches)))
-    (net-set-summary (format "IPv%d %s"
+    (net-set-summary (format "IPv%d, %s"
                              version
                              (if best (plist-get best :name) "global unicast")))
     (net-ip--insert-address-section parsed)

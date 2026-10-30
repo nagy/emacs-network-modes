@@ -275,16 +275,13 @@ This is the `revert-buffer-function' of every inspect buffer."
 
 (defun net--header-line ()
   "Return the header line string of the current inspect buffer."
-  (concat " "
-          (propertize (format "%s" (or net--kind 'net)) 'face 'bold)
-          " "
-          (propertize (or net--value "") 'face 'net-value-face)
-          (if net--summary
-              (concat "  " (propertize net--summary 'face 'net-muted-face))
-            "")))
+  (when net--summary
+    (concat " " (propertize net--summary 'face 'net-muted-face))))
 
 (defun net-set-summary (text)
-  "Set the header line summary of the current buffer to TEXT."
+  "Set the header line summary of the current buffer to TEXT.
+TEXT names the classification only.  The buffer name and the mode line
+already show the kind and the value."
   (setq net--summary text))
 
 ;;; Rendering helpers
