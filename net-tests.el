@@ -714,6 +714,80 @@ the start of the buffer."
 
 ;;; net-mac
 
+(ert-deftest net-tests-data-description ()
+  "A database description names the file, an optional count and a date."
+  (net-tests--with-file "x"
+    (should (equal (net-data-description net-tests--file "7 ranges")
+                   (format "%s, 7 ranges, %s"
+                           (file-name-nondirectory net-tests--file)
+                           (format-time-string "%Y-%m-%d"))))
+    (should (equal (net-data-description net-tests--file)
+                   (format "%s, %s"
+                           (file-name-nondirectory net-tests--file)
+                           (format-time-string "%Y-%m-%d"))))))
+
+(ert-deftest net-tests-data-row-ffap ()
+  "A data row resolves through ffap without printing the full path."
+  (net-tests--with-file
+      (concat "Address Block,Name,RFC,Allocation Date,Termination Date,"
+              "Source,Destination,Forwardable,Globally Reachable,"
+              "Reserved-by-Protocol\n"
+              "192.0.2.0/24,Documentation,[RFC 5737],2010-01,N/A,"
+              "True,False,False,False,False\n")
+    (let ((net-cidr-registry-file net-tests--file)
+          (net-ip--registry-cache nil))
+      (with-current-buffer (net-cidr-inspect "192.0.2.0/24")
+        (should (local-variable-p 'ffap-alist))
+        ;; The row names the file without printing its path.
+        (should (string-match-p "IANA special-purpose registry CSV"
+                                (buffer-string)))
+        (should-not (string-search net-tests--file (buffer-string)))
+        (goto-char (point-min))
+        (let ((case-fold-search nil))
+          (search-forward "registry CSV"))
+        (backward-char)
+        (should (equal (get-text-property (point) 'net-file)
+                       net-tests--file))
+        ;; `ffap' may return the bare name when the fixture sits in the
+        ;; buffer's default directory, so compare expanded paths.
+        (should (equal (expand-file-name (ffap-file-at-point))
+                       net-tests--file))
+        (should (equal (expand-file-name (ffap-guesser))
+                       net-tests--file))
+        (should (equal (cadr (embark-net-target-database-file))
+                       net-tests--file))
+        (let* ((report (net-cidr-report "192.0.2.0/24"))
+               (section (seq-find
+                         (lambda (candidate)
+                           (eq (plist-get candidate :json) :classification))
+                         (plist-get report :sections))))
+          (should (equal (plist-get section :sourceFile)
+                         net-tests--file)))))))
+
+(ert-deftest net-tests-data-row-opens-file ()
+  "RET on a data row opens the database file."
+  (net-tests--with-file
+      (concat "Address Block,Name,RFC,Allocation Date,Termination Date,"
+              "Source,Destination,Forwardable,Globally Reachable,"
+              "Reserved-by-Protocol\n"
+              "192.0.2.0/24,Documentation,[RFC 5737],2010-01,N/A,"
+              "True,False,False,False,False\n")
+    (let ((net-cidr-registry-file net-tests--file)
+          (net-ip--registry-cache nil))
+      (with-current-buffer (net-cidr-inspect "192.0.2.0/24")
+        (goto-char (point-min))
+        (let ((case-fold-search nil))
+          (search-forward "registry CSV"))
+        (backward-char)
+        (let ((button (button-at (point))))
+          (should (eq (button-get button 'action) #'net--open-file-button))
+          (unwind-protect
+              (progn
+                (net--open-file-button button)
+                (should (equal (buffer-file-name) net-tests--file)))
+            (kill-buffer (current-buffer))))
+        (kill-buffer (current-buffer))))))
+
 (ert-deftest net-tests-mac-parse ()
   "MAC parsing accepts the common notations."
   (dolist (text '("aa:bb:cc:dd:ee:ff" "AA-BB-CC-DD-EE-FF" "aabb.ccdd.eeff"

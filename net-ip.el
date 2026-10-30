@@ -645,10 +645,11 @@ address kind of VALUE."
         (list :json :geoip
               :heading "GeoIP"
               :items (list '(:field "Country" :country :countryText)
-                           '(:text "Database" :source))
+                           '(:text "Database" :source :sourceFile))
               :country country
               :countryText (or country "no match")
-              :source (net-geo-description file version))))))
+              :source (net-geo-description file version)
+              :sourceFile file)))))
 
 (defun net-ip--report-asn-section (parsed)
   "Return the origin AS section of PARSED, or nil without a database."
@@ -680,7 +681,8 @@ address kind of VALUE."
                               (list :field "Range" :range))))))
         (list :json :originAs
               :heading "Autonomous System"
-              :items (append items (list '(:text "Database" :source)))
+              :items (append items
+                             (list '(:text "Database" :source :sourceFile)))
               :asn asn
               :asnText (cond ((null entry) "no match")
                              ((zerop asn) "0 (not routed)")
@@ -692,7 +694,8 @@ address kind of VALUE."
                           (format "%s - %s"
                                   (net-ip-format start version)
                                   (net-ip-format end version)))
-              :source (net-asn-ip-description file version))))))
+              :source (net-asn-ip-description file version)
+              :sourceFile file)))))
 
 (defun net-ip-report (address)
   "Return the report of the IP ADDRESS.

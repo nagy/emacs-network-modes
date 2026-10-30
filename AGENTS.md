@@ -15,27 +15,27 @@ the network, and it runs only when invoked.
 
 ## Files
 
-| File                | Purpose                                                                 |
-| ------------------- | ----------------------------------------------------------------------- |
-| `network-modes.el`  | Entry library and package namesake: requires the base mode and all six modes, then provides the feature `network-modes`. `(use-package network-modes ...)` and `:ensure t` load and resolve through it. |
-| `net-mode.el`       | Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP         |
-| `net-geo.el`        | Country lookup from packed range tables or PDDL CSVs                    |
-| `net-ip.el`         | IP parsing/formatting, blocks, registry reader, origin AS, IP mode      |
-| `net-cidr.el`       | Prefix arithmetic, CIDR mode                                            |
-| `net-mac.el`        | MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup             |
-| `net-asn.el`        | AS parsing, IANA registry, ipverse metadata, IP to AS ranges, ASN mode  |
-| `net-domain.el`     | Domain parsing, Punycode encoder, PSL lookup, domain mode               |
-| `net-vsock.el`      | AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode       |
-| `ol-net.el`         | Opt-in Org link types (`net-*:` and `net:`)                             |
-| `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
-| `net-xref.el`       | Opt-in xref backend                                                     |
-| `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (99 tests)                                                    |
-| `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
-| `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
-| `tools/pack-network-data.el` | Packs the range databases into fixed-width tables              |
-| `README.org`        | User documentation                                                      |
-| `LICENSE`           | AGPL-3.0-or-later                                                       |
+|File                        |Purpose                                                                                                                                                                                                |
+|----------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+|`network-modes.el`          |Entry library and package namesake: requires the base mode and all six modes, then provides the feature `network-modes`. `(use-package network-modes ...)` and `:ensure t` load and resolve through it.|
+|`net-mode.el`               |Base mode, kind registry, dispatcher, renderer, bookmarks, RDAP                                                                                                                                        |
+|`net-geo.el`                |Country lookup from packed range tables or PDDL CSVs                                                                                                                                                   |
+|`net-ip.el`                 |IP parsing/formatting, blocks, registry reader, origin AS, IP mode                                                                                                                                     |
+|`net-cidr.el`               |Prefix arithmetic, CIDR mode                                                                                                                                                                           |
+|`net-mac.el`                |MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup                                                                                                                                            |
+|`net-asn.el`                |AS parsing, IANA registry, ipverse metadata, IP to AS ranges, ASN mode                                                                                                                                 |
+|`net-domain.el`             |Domain parsing, Punycode encoder, PSL lookup, domain mode                                                                                                                                              |
+|`net-vsock.el`              |AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode                                                                                                                                      |
+|`ol-net.el`                 |Opt-in Org link types (`net-*:` and `net:`)                                                                                                                                                            |
+|`embark-net.el`             |Opt-in Embark target and actions (`embark-net-mode`)                                                                                                                                                   |
+|`net-xref.el`               |Opt-in xref backend                                                                                                                                                                                    |
+|`net-evil.el`               |Opt-in evil bindings (`net-evil-mode`)                                                                                                                                                                 |
+|`net-tests.el`              |ERT suite (102 tests)                                                                                                                                                                                  |
+|`net-evil-tests.el`         |ERT suite for the evil bindings (8 tests)                                                                                                                                                              |
+|`flake.nix`                 |Database inputs and derivation, `melpaBuild`, outputs and checks                                                                                                                                       |
+|`tools/pack-network-data.el`|Packs the range databases into fixed-width tables                                                                                                                                                      |
+|`README.org`                |User documentation                                                                                                                                                                                     |
+|`LICENSE`                   |AGPL-3.0-or-later                                                                                                                                                                                      |
 
 ## Dependencies
 
@@ -61,14 +61,14 @@ file calls `net-register-kind` at load time with `:open`, `:sniff` and
 `net--kind-features` and tries the sniffers from the highest priority to
 the lowest:
 
-| Kind     | Priority | Notes                                                 |
-| -------- | -------- | ----------------------------------------------------- |
-| `cidr`   | 60       | Requires `/`                                          |
-| `mac`    | 55       | Requires a colon, hyphen or Cisco dot group form      |
-| `vsock`  | 50       | Accepts `CID:PORT` and `vsock://CID:PORT`             |
-| `asn`    | 45       | Only `AS<n>` and `AS<n>.<m>` sniff; bare tokens stay free |
-| `ip`     | 40       | IPv4/IPv6, including zones and IPv4 tails             |
-| `domain` | 10       | Requires a dot and rejects all-numeric labels         |
+|Kind    |Priority|Notes                                                    |
+|--------|--------|---------------------------------------------------------|
+|`cidr`  |60      |Requires `/`                                             |
+|`mac`   |55      |Requires a colon, hyphen or Cisco dot group form         |
+|`vsock` |50      |Accepts `CID:PORT` and `vsock://CID:PORT`                |
+|`asn`   |45      |Only `AS<n>` and `AS<n>.<m>` sniff; bare tokens stay free|
+|`ip`    |40      |IPv4/IPv6, including zones and IPv4 tails                |
+|`domain`|10      |Requires a dot and rejects all-numeric labels            |
 
 `net-inspect` runs the dispatcher on the token at point (the
 `net-address` thing type) or on a prompted string.  `net--thing-bounds`
@@ -101,20 +101,22 @@ renders after the rows.  Those items belong to the buffer only, so a
 caveat such as the vsock service note never reaches the JSON.  An item is one of five lists, matching the five
 renderer helpers:
 
-| Item | Renders |
-| ---- | ------- |
-| `(:field LABEL KEY [TEXT])` | `net-insert-field` |
-| `(:link LABEL KIND KEY [TEXT])` | `net-insert-link` |
-| `(:links LABEL KIND KEY [TEXTS])` | `net-insert-link-list` |
-| `(:text LABEL KEY)` | `net-insert-text` |
-| `(:warning KEY)` | `net-insert-warning` |
+|Item                             |Renders                               |
+|---------------------------------|--------------------------------------|
+|`(:field LABEL KEY [TEXT])`      |`net-insert-field`                    |
+|`(:link LABEL KIND KEY [TEXT])`  |`net-insert-link`                     |
+|`(:links LABEL KIND KEY [TEXTS])`|`net-insert-link-list`                |
+|`(:text LABEL KEY [FILEKEY])`    |`net-insert-text` or `net-insert-file`|
+|`(:warning KEY)`                 |`net-insert-warning`                  |
 
 `KEY` names a key of the surrounding plist.  `TEXT` and `TEXTS` only
 change what the buffer shows, so `:privateText` can read
 `yes (RFC 1918)` while `:private` holds `t`.  A boolean member holds
 `t` or `:json-false`, never `nil`, because `nil` encodes as `null`.
 `net--flag` converts the `True`, `False` and `N/A` cells of the
-registry CSV files.
+registry CSV files.  `FILEKEY` names the path of the database that the
+row describes, and the renderer opens the file as a button when it is
+readable.
 
 `net--json-value` walks a report: a plist becomes an object, any other
 list an array, and an integer beyond 2^53-1 a string, because
@@ -154,6 +156,8 @@ only the helpers in `net-mode.el`:
 - `net-insert-link` (button that opens another kind)
 - `net-insert-link-list` (comma separated buttons on one wrapping line)
 - `net-insert-text` (non-button, can span lines)
+- `net-insert-file` (button that opens a database file, and that
+  `ffap' resolves)
 - `net-insert-warning`
 - `net-set-summary` (classification for the JSON view only, because
   the buffer body shows the same facts as fields, and the buffer name
@@ -168,6 +172,27 @@ off.  `J` opens the JSON view.
 
 A mode sets `net--rdap-type` and `net--rdap-key` at the end of its
 renderer when the value has an RDAP identity.
+
+### Database rows
+
+A row that names a database file prints a short description only.
+`net-data-description` formats the plain file name, an optional count
+and the modification date, and `net-insert-file` hides the path in the
+`net-file` text property on a button that `RET` opens.  The report
+keeps the path under its own key, such as `:sourceFile`, so the JSON
+view carries the real path while the buffer does not.
+
+`net-mode` installs `net--file-at-point` in the buffer-local
+`ffap-alist` with a key that matches every name, so
+`ffap-file-at-point`, `find-file-at-point` and `ffap-at-mouse` reach
+the file.  The key cannot name the major mode: `define-derived-mode`
+runs the body of the parent before it sets `major-mode`, and `ffap`
+matches a symbol key with `eq`.  The alist entry stays buffer-local, so
+other buffers keep the stock `ffap` behaviour.
+
+`embark-net.el` adds `embark-net-target-database-file`, because the
+stock Embark file finder needs a file shaped token at point, and a row
+can read `IANA special-purpose registry CSV`.
 
 ### Data access
 
@@ -425,6 +450,12 @@ suffix, which package-build and the lint gates exclude.
   add its key, its item and its value in `net-KIND-report`, and both the
   buffer and the JSON view follow.  Keep a display label out of the
   item key, and keep the JSON name in the key.
+- A row that names a database file holds two members: the text, for
+  example `:source`, and the path, for example `:sourceFile`.  The
+  `:text` item names the path key as its fourth element, and the
+  renderer turns the row into a file button only when the file is
+  readable.  Build the text through `net-data-description`, so a store
+  copy reads as a pinned copy.
 - Booleans in a report hold `t` or `:json-false`.  A `nil` value means
   unknown and encodes as `null`, so use `TEXT` for a row that must read
   `no` while the member holds a real false.

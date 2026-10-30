@@ -399,11 +399,14 @@ Return nil when the list file is not available.  The plist holds
                                '(:link "Registrable domain" domain
                                        :registrable)
                              '(:field "Registrable domain" :registrable
-                                      :registrableText)))
+                                      :registrableText))
+                           '(:text "List" :source :sourceFile))
               :suffix (plist-get fields :suffix)
               :suffixLabels (plist-get fields :labels)
               :section (plist-get fields :section)
               :registrable registrable
+              :source (net-data-description net-domain-psl-file)
+              :sourceFile net-domain-psl-file
               :registrableText (unless registrable
                                  "the name is itself a public suffix"))))))
 

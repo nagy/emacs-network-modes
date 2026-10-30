@@ -138,6 +138,9 @@ identity of the prefix.  `net--render-report' renders it, and
          (matches (net-cidr-matching-entries parsed))
          (best (car matches))
          (csv (net-cidr-registry-entries version))
+         (csv-file (if (= version 4)
+                       net-ip-registry-file
+                     net-ip-registry-file-v6))
          (private (net-ip-private-range-p network last version))
          (network-text (net-ip-format network version))
          (last-text (net-ip-format last version))
@@ -242,7 +245,7 @@ identity of the prefix.  `net--render-report' renders it, and
                               '(:field "Globally reachable" :globallyReachable
                                        :globallyReachableText)))))
                    (list '(:field "Private" :private :privateText)
-                         '(:text "Data source" :source)))
+                         '(:text "Data source" :source :sourceFile)))
                   :name (if best
                             (plist-get best :name)
                           "Global unicast (no special-purpose block)")
@@ -269,7 +272,8 @@ identity of the prefix.  `net--render-report' renders it, and
                   :source (if csv
                               "IANA special-purpose registry CSV"
                             (concat "built-in table (set "
-                                    "`net-ip-registry-file' for IANA data)")))
+                                    "`net-ip-registry-file' for IANA data)"))
+                  :sourceFile (when csv csv-file))
             (when (> (length matches) 1)
               (list :json :containingBlocks :heading "Containing Blocks"
                     :records

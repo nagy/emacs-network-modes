@@ -64,22 +64,27 @@ a URL counts as an address.
 
 ** Key bindings
 
-| Key   | Command         | Description                      |
-|-------+-----------------+----------------------------------|
-| =RET=   | =push-button=     | follow a field or address button |
-| =TAB=   | =forward-button=  | move to the next button          |
-| =S-TAB= | =backward-button= | move to the previous button      |
-| =q=     | =quit-window=     | bury the inspect buffer          |
-| =gr=    | =revert-buffer=   | render the value again           |
-| =w=     | =net-copy-value=  | copy the inspected value         |
-| =b=     | =net-rdap=        | fetch RDAP data for this value   |
+| Key   | Command         | Description                        |
+|-------+-----------------+------------------------------------|
+| =RET=   | =push-button=     | follow a field or address button   |
+| =TAB=   | =forward-button=  | move to the next button            |
+| =S-TAB= | =backward-button= | move to the previous button        |
+| =q=     | =quit-window=     | bury the inspect buffer            |
+| =gr=    | =revert-buffer=   | render the value again             |
+| =w=     | =net-copy-value=  | copy the inspected value           |
+| =b=     | =net-rdap=        | fetch RDAP data for this value     |
 | =J=     | =net-json-view=   | show the JSON report of this value |
-| =i=     | =net-inspect=     | inspect the address at point     |
+| =i=     | =net-inspect=     | inspect the address at point       |
 
 Every field is a button: =RET= or the button's default action copies
 its value.  Related addresses (host prefix, parent prefix, embedded
 IPv4, provider AS, registrable domain) are buttons that open their own
-buffer.  Inspecting the same value twice reuses the same buffer.
+buffer.  A row that names a database file is a button that opens the
+file.  The row prints the plain file name only, so =ffap=,
+=find-file-at-point= and the Embark file actions still reach the file:
+the path travels in the =net-file= text property, and the mode installs
+=net--file-at-point= in the buffer-local =ffap-alist=.  Inspecting the
+same value twice reuses the same buffer.
 
 ** Buffers
 
@@ -266,7 +271,9 @@ Four opt-in modules sit beside the modes:
   =net-asn:=, =net-domain:=, =net-vsock:= and the dispatching =net:=
   type
 - =embark-net.el= -- Embark target =net-address= with inspect and copy
-  actions, enabled with =embark-net-mode=
+  actions, and the =file= target of a database row, enabled with
+  =embark-net-mode=; the row shows a short name, so a separate finder
+  reads the =net-file= text property
 - =net-xref.el= -- xref backend, so =xref-find-definitions= on any
   address opens its inspect buffer
 - =net-evil.el= -- evil bindings for every inspect buffer, enabled

@@ -165,18 +165,13 @@ not change.  Return nil when FILE is a packed table."
           (net-geo--search (plist-get data :ranges) value))))))
 
 (defun net-geo-description (file version)
-  "Return a one-line description of the range FILE of VERSION.
-A file in the Nix store has an epoch modification time, so report it
-as a pinned copy instead of a meaningless date."
-  (let* ((attributes (file-attributes file))
-         (time (file-attribute-modification-time attributes))
-         (count (or (plist-get (net-geo--table file version) :count)
-                    (plist-get (net-geo--data file version) :count)
-                    "?"))
-         (date (if (time-less-p time (encode-time 86400 0 0 1 1 1980))
-                   "pinned copy"
-                 (format-time-string "%Y-%m-%d" time))))
-    (format "%s, %s ranges, %s" (file-name-nondirectory file) count date)))
+  "Return a one-line description of the range FILE of VERSION."
+  (net-data-description
+   file
+   (format "%s ranges"
+           (or (plist-get (net-geo--table file version) :count)
+               (plist-get (net-geo--data file version) :count)
+               "?"))))
 
 (defun net-geo-clear-cache ()
   "Forget every parsed range file."

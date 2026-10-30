@@ -175,14 +175,20 @@ vsock://CID:PORT with decimal or hexadecimal numbers."
           (list :json :serviceNames
                 :heading "IANA Service Names"
                 :items (list '(:field "Service" :service :serviceText)
-                             '(:text "Note" :note))
+                             '(:text "Note" :note)
+                             '(:text "Database" :source :sourceFile))
                 :service nil
                 :serviceText "none with this number"
+                :source (net-data-description net-vsock-service-file)
+                :sourceFile net-vsock-service-file
                 :note (concat "AF_VSOCK ports are not assigned by IANA; "
                               "this is informational."))
         (list :json :serviceNames
               :heading "IANA Service Names"
-              :items (list '(:text "Note" :note))
+              :items (list '(:text "Note" :note)
+                           '(:text "Database" :source :sourceFile))
+              :source (net-data-description net-vsock-service-file)
+              :sourceFile net-vsock-service-file
               :note (concat "AF_VSOCK ports are not assigned by IANA; "
                             "this is informational.")
               :records

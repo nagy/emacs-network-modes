@@ -32,6 +32,11 @@
 ;;   RET  inspect the address in its major mode
 ;;   w    copy the address to the kill ring
 ;;
+;; When point is on a database row of an inspect buffer, `embark-act'
+;; offers the file actions, so `RET' opens the database file and `d'
+;; lists its directory.  The row prints a short name only, so the
+;; target reads the path from the `net-file' text property.
+;;
 ;; This module is opt-in:
 ;;
 ;;   (require 'embark-net)
@@ -51,6 +56,16 @@
                       (car bounds) (cdr bounds)))
               ((net-sniff value)))
     `(net-address ,value ,(car bounds) . ,(cdr bounds))))
+
+(defun embark-net-target-database-file ()
+  "Target the database file of the row at point for Embark."
+  (when-let* ((file (get-text-property (point) 'net-file)))
+    (let* ((end (next-single-property-change (point) 'net-file
+                                             nil (point-max)))
+           (beg (or (previous-single-property-change end 'net-file
+                                                     nil (point-min))
+                    (point-min))))
+      `(file ,(abbreviate-file-name file) ,beg . ,end))))
 
 (defun embark-net-inspect (value)
   "Inspect the network address VALUE."
@@ -85,8 +100,11 @@
           (setq embark-net-mode nil)
           (user-error "Load Embark before enabling embark-net-mode"))
         (add-hook 'embark-target-finders #'embark-net-target-at-point)
+        (add-hook 'embark-target-finders
+                  #'embark-net-target-database-file)
         (add-to-list 'embark-keymap-alist '(net-address . embark-net-map)))
     (remove-hook 'embark-target-finders #'embark-net-target-at-point)
+    (remove-hook 'embark-target-finders #'embark-net-target-database-file)
     (setq embark-keymap-alist
           (assq-delete-all 'net-address embark-keymap-alist))))
 

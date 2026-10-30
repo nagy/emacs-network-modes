@@ -62,6 +62,7 @@
 (require 'bookmark)
 (require 'button)
 (require 'cl-lib)
+(require 'ffap)
 (require 'js)
 (require 'json)
 (require 'seq)
@@ -217,6 +218,31 @@ NAME is a plain file name, for example \"as.json\"."
   "Return non-nil when database FILE exists and is readable."
   (and (stringp file) (file-readable-p file)))
 
+(defun net-data-description (file &optional detail)
+  "Return a one-line description of the database FILE.
+DETAIL names a count, for example \"296150 ranges\".  A file in the Nix
+store has an epoch modification time, so it reports a pinned copy
+instead of a meaningless date."
+  (let* ((attributes (file-attributes file))
+         (time (file-attribute-modification-time attributes))
+         (date (cond ((null attributes) nil)
+                     ((time-less-p time (encode-time 86400 0 0 1 1 1980))
+                      "pinned copy")
+                     (t (format-time-string "%Y-%m-%d" time))))
+         (name (file-name-nondirectory file)))
+    (cond ((null date) name)
+          (detail (format "%s, %s, %s" name detail date))
+          (t (format "%s, %s" name date)))))
+
+(defun net--file-at-point (&optional _name)
+  "Return the file of the database row at point, or nil.
+A row names its file in the `net-file' text property instead of
+printing the full path, so `ffap' reads the path from there.
+`net-mode' installs this function in the buffer-local `ffap-alist'
+with a key that matches every name.  `ffap-file-at-point' calls it
+with the file name it guessed, which the text property replaces."
+  (get-text-property (point) 'net-file))
+
 ;;; Kind registry
 
 (defun net-register-kind (kind plist)
@@ -358,6 +384,21 @@ TEXT can span several lines."
   (insert (propertize (format "%s" text) 'face 'net-muted-face)
           "\n"))
 
+(defun net-insert-file (label text file)
+  "Insert LABEL and TEXT as a button that opens FILE.
+TEXT stays a short name, so the buffer never prints a store path.  The
+path lives in the `net-file' text property, where `ffap-file-at-point'
+and Embark find it, and in the button that `RET' pushes."
+  (net--insert-label label)
+  (insert-text-button (format "%s" text)
+                      'net-file file
+                      'face 'net-muted-face
+                      'follow-link t
+                      'action #'net--open-file-button
+                      'help-echo (format "Open %s"
+                                         (file-name-nondirectory file)))
+  (insert "\n"))
+
 (defun net--insert-link-button (kind value)
   "Insert a button that opens the KIND address VALUE."
   (insert-text-button (format "%s" value)
@@ -417,11 +458,14 @@ The first element of ITEM is its type:
   (:field LABEL KEY [TEXT])   copyable value
   (:link LABEL KIND KEY [TEXT])   button that opens another kind
   (:links LABEL KIND KEY [TEXTS])  list of buttons
-  (:text LABEL KEY)           plain text, can span lines
+  (:text LABEL KEY [FILEKEY]) plain text, can span lines
   (:warning KEY)              warning line
 
 TEXT and TEXTS override the displayed text, so the buffer can show a
-sentence while the JSON keeps the bare value."
+sentence while the JSON keeps the bare value.  FILEKEY names the
+filesystem path of the database that TEXT describes.  A readable file
+turns the row into a button that opens it, and `ffap' resolves the row
+without the buffer printing the path."
   (pcase (car item)
     (:field
      (let ((display (nth 3 item)))
@@ -439,7 +483,11 @@ sentence while the JSON keeps the bare value."
       (mapcar (lambda (value) (cons (nth 2 item) value))
               (net--item-value (or (nth 4 item) (nth 3 item)) source))))
     (:text
-     (net-insert-text (nth 1 item) (net--item-value (nth 2 item) source)))
+     (let ((text (net--item-value (nth 2 item) source))
+           (file (and (nth 3 item) (net--item-value (nth 3 item) source))))
+       (if (net-data-available-p file)
+           (net-insert-file (nth 1 item) text file)
+         (net-insert-text (nth 1 item) text))))
     (:warning
      (net-insert-warning (net--item-value (nth 1 item) source)))))
 
@@ -906,6 +954,10 @@ The rows are sorted by start address and do not overlap."
     (kill-new value)
     (message "Copied: %s" value)))
 
+(defun net--open-file-button (button)
+  "Open the database file of BUTTON."
+  (find-file (button-get button 'net-file)))
+
 (defun net--open-button (button)
   "Open the value of BUTTON in its own inspect buffer."
   (net--open (button-get button 'net-kind)
@@ -1162,6 +1214,13 @@ A derived mode sets `net--render-function' to a function that calls
   (setq-local revert-buffer-function #'net-refresh)
   (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
+  ;; A database row holds a short name, so `ffap' learns the real path
+  ;; from the `net-file' text property.  The key matches every name,
+  ;; because this body runs before `major-mode' names the derived mode.
+  ;; The entry stays buffer-local, so other buffers keep the stock
+  ;; `ffap' behaviour.
+  (setq-local ffap-alist
+              (cons (cons "" #'net--file-at-point) ffap-alist))
   ;; The rendered data comes from the network, not from a file: keep
   ;; the buffer out of the project, the version-controlled tree and
   ;; the language servers of the buffer that opened it.

@@ -471,18 +471,9 @@ range."
                       :end end)))))))))
 
 (defun net-asn-ip-description (file version)
-  "Return a one-line description of the range FILE of VERSION.
-A file in the Nix store has an epoch modification time, so report it
-as a pinned copy instead of a meaningless date."
-  (let* ((attributes (file-attributes file))
-         (time (file-attribute-modification-time attributes))
-         (count (plist-get (net-asn--ip-table version) :count))
-         (date (if (time-less-p time (encode-time 86400 0 0 1 1 1980))
-                   "pinned copy"
-                 (format-time-string "%Y-%m-%d" time))))
-    (if count
-        (format "%s, %s ranges, %s" (file-name-nondirectory file) count date)
-      (format "%s, %s" (file-name-nondirectory file) date))))
+  "Return a one-line description of the range FILE of VERSION."
+  (let ((count (plist-get (net-asn--ip-table version) :count)))
+    (net-data-description file (and count (format "%s ranges" count)))))
 
 ;;; Report
 
@@ -538,8 +529,9 @@ as a pinned copy instead of a meaningless date."
     (if (or (null entry) (null metadata))
         (list :json :metadata
               :heading "Metadata"
-              :items (list '(:text "Database" :database))
-              :database "no entry for this AS number")
+              :items (list '(:text "Database" :database :databaseFile))
+              :database "no entry for this AS number"
+              :databaseFile net-asn-database-file)
       (list :json :metadata
             :heading "Metadata"
             :items (delq nil
@@ -553,7 +545,11 @@ as a pinned copy instead of a meaningless date."
                                                    :networkRoleName))
                                '(:field "Registered" :registered)
                                '(:field "Last modified" :lastModified)
-                               '(:field "Last announced" :lastAnnounced)))
+                               '(:field "Last announced" :lastAnnounced)
+                               '(:text "Database" :database
+                                       :databaseFile)))
+            :database (net-data-description net-asn-database-file)
+            :databaseFile net-asn-database-file
             :handle (alist-get 'handle metadata)
             :description (alist-get 'description metadata)
             :country name

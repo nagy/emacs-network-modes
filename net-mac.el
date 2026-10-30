@@ -359,7 +359,7 @@ TABLE maps \"BITS:PREFIX\" to a plist with :mask, :short and :long."
                                               (not (string-empty-p address)))
                                      '(:field "Organization address"
                                               :organizationAddress))
-                                   '(:text "Source" :source)))
+                                   '(:text "Source" :source :sourceFile)))
                 :prefix prefix-text
                 :vendor (plist-get entry :name)
                 :registry registry
@@ -373,7 +373,9 @@ TABLE maps \"BITS:PREFIX\" to a plist with :mask, :short and :long."
                 :organizationAddress (and address
                                           (not (string-empty-p address))
                                           address)
-                :source (plist-get entry :file)))))))
+                :source (plist-get entry :file)
+                :sourceFile (expand-file-name (plist-get entry :file)
+                                              net-mac-registry-directory)))))))
 
 (defun net-mac--report-manuf-section (parsed)
   "Return the Wireshark manuf section of PARSED, or nil."
@@ -383,11 +385,12 @@ TABLE maps \"BITS:PREFIX\" to a plist with :mask, :short and :long."
           :items (list '(:field "Short name" :shortName)
                        '(:field "Long name" :longName)
                        '(:field "Mask bits" :maskBits)
-                       '(:text "Source" :source))
+                       '(:text "Source" :source :sourceFile))
           :shortName (plist-get entry :short)
           :longName (plist-get entry :long)
           :maskBits (plist-get entry :mask)
-          :source (file-name-nondirectory net-mac-manuf-file))))
+          :source (file-name-nondirectory net-mac-manuf-file)
+          :sourceFile net-mac-manuf-file)))
 
 (defun net-mac--report-eui64-section (parsed)
   "Return the IPv6 interface identifier section of PARSED, or nil."
