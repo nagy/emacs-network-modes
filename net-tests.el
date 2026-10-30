@@ -272,6 +272,26 @@ kind for `net-inspect'."
       (should (string-match-p "11000000\\.00000000\\.00000010\\.00000001"
                               (buffer-string))))))
 
+(ert-deftest net-tests-modes-drop-the-project-directory ()
+  "Every inspect mode starts its buffer in `temporary-file-directory'.
+The rendered data comes from the network, not from a file, so the
+buffer joins no project and no version-controlled tree."
+  (let ((temporary-file-directory "/tmp/"))
+    (dolist (mode '(net-mode net-ip-mode net-cidr-mode net-mac-mode
+                    net-asn-mode net-domain-mode net-vsock-mode))
+      (with-temp-buffer
+        (setq default-directory "/some/project/")
+        (funcall mode)
+        (should (equal default-directory "/tmp/"))))))
+
+(ert-deftest net-tests-inspect-buffer-drops-the-project-directory ()
+  "An opened inspect buffer starts in `temporary-file-directory'.
+Opening an address from a project must not put the buffer in it."
+  (let ((temporary-file-directory "/tmp/")
+        (default-directory "/some/project/"))
+    (with-current-buffer (net-ip-inspect "192.0.2.1")
+      (should (equal default-directory "/tmp/")))))
+
 (ert-deftest net-tests-copy-value ()
   "Copying the inspected value fills the kill ring."
   (with-current-buffer (net-ip-inspect "203.0.113.9")

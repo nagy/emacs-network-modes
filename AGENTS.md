@@ -84,7 +84,14 @@ stores `net--kind`, `net--value` and `net--render-function`, then calls
 `net-refresh`, which erases the buffer and runs the renderer.  The
 refresh clears the modified flag with `set-buffer-modified-p nil`, and
 both RDAP render paths clear it too, so a read-only inspect buffer
-never shows a modified flag and never prompts on quit.  Renderers use
+never shows a modified flag and never prompts on quit.  `net-mode`
+also sets the buffer-local `default-directory` to
+`temporary-file-directory`, because the buffer shows network data
+and belongs to no project: `project.el`, version control and
+language servers stay out of it.  A new buffer path that does not
+go through `net-display` sets the directory itself, with
+`file-name-as-directory` so the value keeps its trailing slash.
+Renderers use
 only the helpers in `net-mode.el`:
 
 - `net-insert-heading`

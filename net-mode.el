@@ -864,7 +864,11 @@ Derived modes set `net--render-function' and render their fields with
   (setq-local header-line-format '(:eval (net--header-line)))
   (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
-  (setq-local default-directory temporary-file-directory))
+  ;; The rendered data comes from the network, not from a file: keep
+  ;; the buffer out of the project, the version-controlled tree and
+  ;; the language servers of the buffer that opened it.
+  (setq-local default-directory
+              (file-name-as-directory temporary-file-directory)))
 
 ;;; Dispatcher and thing-at-point
 
