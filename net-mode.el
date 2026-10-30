@@ -37,6 +37,7 @@
 ;;   - a read-only renderer with copyable field buttons
 ;;   - a header line with a one-line classification
 ;;   - a bookmark handler per inspected value
+;;   - a report per value, which draws the buffer and the JSON view
 ;;   - an explicit RDAP lookup command, never automatic
 ;;   - `net-inspect', the dispatcher that sniffs the token at point
 ;;
@@ -52,6 +53,7 @@
 ;;   M-x net-inspect      - inspect the address at point, or ask
 ;;   M-x net-open         - open a value of a known kind
 ;;   M-x net-rdap         - fetch RDAP data for the current value
+;;   M-x net-json-view    - show the report of the current value as JSON
 ;;   M-x net-copy-value   - copy the inspected value to the kill ring
 
 ;;; Code:
@@ -60,6 +62,7 @@
 (require 'bookmark)
 (require 'button)
 (require 'cl-lib)
+(require 'js)
 (require 'json)
 (require 'seq)
 (require 'subr-x)
@@ -86,6 +89,12 @@ downloaded databases.  A nil value means no bundled databases."
   "Format of inspect buffer names.
 The first argument is the kind name, for example \"ip\".  The second
 argument is the canonical address string."
+  :type 'string
+  :group 'net)
+
+(defcustom net-json-buffer-name-format "%s JSON"
+  "Format of the JSON view buffer name.
+The argument is the name of the source inspect buffer."
   :type 'string
   :group 'net)
 
@@ -163,6 +172,21 @@ The next lookup replaces that section instead of appending another.")
 
 (defvar-local net--rdap-request-buffer nil
   "Buffer that holds the response of the RDAP request, or nil.")
+
+(defvar-local net--rdap-raw nil
+  "Body of the last successful RDAP answer, or nil.
+`net-json-view' parses it again with hash tables, so the JSON view
+shows the answer exactly as the server sent it.")
+
+(defvar-local net--report nil
+  "Report plist of the current inspect buffer, or nil.
+`net--render-report' sets it, and `net-json-view' encodes it.")
+
+(defvar-local net--json-buffer nil
+  "JSON view buffer linked to this inspect buffer, or nil.")
+
+(defvar-local net--json-source nil
+  "Inspect buffer whose report this JSON buffer shows.")
 
 (defvar-local net--headings nil
   "Section headings of this buffer, newest first.
@@ -265,14 +289,17 @@ This is the `revert-buffer-function' of every inspect buffer."
   (let ((inhibit-read-only t))
     (erase-buffer)
     (setq net--summary nil
+          net--report nil
           net--rdap-type nil
           net--rdap-key nil
           net--rdap-start nil
+          net--rdap-raw nil
           net--headings nil)
     (when net--render-function
       (funcall net--render-function))
     (goto-char (point-min))
-    (set-buffer-modified-p nil)))
+    (set-buffer-modified-p nil)
+    (net--json-redraw)))
 
 (defun net--header-line ()
   "Return the header line string of the current inspect buffer."
@@ -366,6 +393,268 @@ window edge instead of putting one button on each line."
 (defun net-insert-warning (text)
   "Insert TEXT as a warning line."
   (insert (propertize (format "%s\n" text) 'face 'net-warning-face)))
+
+;;; Reports
+
+(defconst net--json-schema 1
+  "Version of the report layout that the JSON view writes.")
+
+(defconst net--json-safe-integer (1- (ash 1 53))
+  "Largest integer that a JSON double represents exactly.
+IPv6 integers and host counts exceed it, so the encoder writes them
+as strings, as RFC 7493 recommends.")
+
+(defun net--item-value (reference source)
+  "Return the value of REFERENCE inside the plist SOURCE.
+REFERENCE is a keyword that names a key of SOURCE, or a literal
+value, which comes back unchanged."
+  (if (keywordp reference)
+      (plist-get source reference)
+    reference))
+
+(defun net--render-item (item source)
+  "Render one report ITEM from the plist SOURCE.
+The first element of ITEM is its type:
+
+  (:field LABEL KEY [TEXT])   copyable value
+  (:link LABEL KIND KEY [TEXT])   button that opens another kind
+  (:links LABEL KIND KEY [TEXTS])  list of buttons
+  (:text LABEL KEY)           plain text, can span lines
+  (:warning KEY)              warning line
+
+TEXT and TEXTS override the displayed text, so the buffer can show a
+sentence while the JSON keeps the bare value."
+  (pcase (car item)
+    (:field
+     (let ((display (nth 3 item)))
+       (net-insert-field (nth 1 item)
+                         (if display
+                             (net--item-value display source)
+                           (net--item-value (nth 2 item) source)))))
+    (:link
+     (net-insert-link (nth 1 item) (nth 2 item)
+                      (net--item-value (or (nth 4 item) (nth 3 item))
+                                       source)))
+    (:links
+     (net-insert-link-list
+      (nth 1 item)
+      (mapcar (lambda (value) (cons (nth 2 item) value))
+              (net--item-value (or (nth 4 item) (nth 3 item)) source))))
+    (:text
+     (net-insert-text (nth 1 item) (net--item-value (nth 2 item) source)))
+    (:warning
+     (net-insert-warning (net--item-value (nth 1 item) source)))))
+
+(defun net--render-section (section)
+  "Render one report SECTION.
+A section holds `:items' and one object of values, or `:records'
+with one object of values per row.  A records section can also hold
+`:items', which it renders after the rows; those items belong to the
+buffer only and never reach the JSON."
+  (when-let* ((heading (plist-get section :heading)))
+    (net-insert-heading heading))
+  (if-let* ((records (plist-get section :records)))
+      (dolist (record records)
+        (dolist (item (plist-get record :items))
+          (net--render-item item record)))
+    (dolist (item (plist-get section :items))
+      (net--render-item item section)))
+  (when (plist-get section :records)
+    (dolist (item (plist-get section :items))
+      (net--render-item item section))))
+
+(defun net--render-report (report)
+  "Render REPORT in the current inspect buffer.
+REPORT holds `:summary', `:sections' and, when the value has one, the
+`rdap' identity.  `:rdap-type' and `:rdap-key' supply the RDAP lookup."
+  (setq net--report report)
+  (when-let* ((summary (plist-get report :summary)))
+    (net-set-summary summary))
+  (dolist (section (plist-get report :sections))
+    (net--render-section section))
+  (when-let* ((key (plist-get report :rdap-key)))
+    (setq-local net--rdap-type (plist-get report :rdap-type)
+                net--rdap-key key)))
+
+(defun net--json-name (key)
+  "Return the JSON member name of KEY."
+  (if (keywordp key)
+      (substring (symbol-name key) 1)
+    (format "%s" key)))
+
+(defun net--flag (text)
+  "Return the boolean form of the registry flag TEXT.
+Registry CSV files spell a flag as `True', `False', `N/A' or an
+empty cell.  Return t, `:json-false' or nil respectively."
+  (pcase (and (stringp text) (downcase (string-trim text)))
+    ((or "true" "yes") t)
+    ((or "false" "no") :json-false)
+    (_ nil)))
+
+(defun net--json-value (value)
+  "Return VALUE in a form that `json-encode' writes safely.
+A plist becomes an object, any other list becomes an array, a hash
+table and a vector pass through, and an integer beyond
+`net--json-safe-integer' becomes a string."
+  (cond
+   ((integerp value)
+    (if (<= (abs value) net--json-safe-integer)
+        value
+      (number-to-string value)))
+   ((keywordp (car-safe value))
+    (let (result)
+      (while value
+        (push (cons (net--json-name (car value))
+                    (net--json-value (cadr value)))
+              result)
+        (setq value (cddr value)))
+      (nreverse result)))
+   ((consp value)
+    (mapcar #'net--json-value value))
+   (t value)))
+
+(defun net--report-section-object (section)
+  "Return the JSON members of SECTION as an alist.
+The item keys name the members, so a display label never reaches the
+JSON.  `:json-extra' adds members that the buffer does not show."
+  (let (result)
+    (dolist (item (plist-get section :items))
+      (let ((key (pcase (car item)
+                   ((or :field :text) (nth 2 item))
+                   (:link (nth 3 item))
+                   (:links (nth 3 item))
+                   (:warning (nth 1 item)))))
+        (when (keywordp key)
+          (push (cons (net--json-name key)
+                      (net--json-value (plist-get section key)))
+                result))))
+    (let ((extra (plist-get section :json-extra)))
+      (while extra
+        (push (cons (net--json-name (car extra))
+                    (net--json-value (cadr extra)))
+              result)
+        (setq extra (cddr extra))))
+    (nreverse result)))
+
+(defun net--report-sections (report)
+  "Return the JSON members of the sections of REPORT as an alist."
+  (let (result)
+    (dolist (section (plist-get report :sections))
+      (push (cons (net--json-name (plist-get section :json))
+                  (if-let* ((records (plist-get section :records)))
+                      (mapcar (lambda (record)
+                                (net--json-value (plist-get record :json)))
+                              records)
+                    (net--report-section-object section)))
+            result))
+    (nreverse result)))
+
+(defun net--json-report (report kind value answer)
+  "Return the JSON view of REPORT as an alist.
+KIND and VALUE name the inspected value.  ANSWER is the parsed RDAP
+response, or nil."
+  (let ((result (list (cons "schema" net--json-schema)
+                      (cons "kind" (symbol-name kind))
+                      (cons "value" value))))
+    (when-let* ((summary (plist-get report :summary)))
+      (setq result (append result (list (cons "summary" summary)))))
+    (when-let* ((rdap (plist-get report :rdap)))
+      (setq result (append result
+                           (list (cons "rdap" (net--json-value rdap))))))
+    (setq result (append result (net--report-sections report)))
+    (when answer
+      (setq result (append result (list (cons "rdapAnswer" answer)))))
+    result))
+
+;;; JSON view
+
+(defun net--json-parse-answer (raw)
+  "Return the parsed RDAP response RAW with hash tables, or nil."
+  (when (and (stringp raw) (not (string-empty-p raw)))
+    (condition-case nil
+        (json-parse-string raw)
+      (error nil))))
+
+(defun net--json-text (source)
+  "Return the JSON text of inspect buffer SOURCE, or nil."
+  (let ((report (buffer-local-value 'net--report source)))
+    (when report
+      (json-encode
+       (net--json-report report
+                         (buffer-local-value 'net--kind source)
+                         (buffer-local-value 'net--value source)
+                         (net--json-parse-answer
+                          (buffer-local-value 'net--rdap-raw source)))))))
+
+(defun net--json-render (source)
+  "Replace the current buffer with the JSON text of SOURCE."
+  (let ((inhibit-read-only t)
+        (text (net--json-text source)))
+    (erase-buffer)
+    (when text
+      (insert text)
+      (json-pretty-print-buffer))
+    (goto-char (point-min))))
+
+(defun net--json-redraw ()
+  "Redraw the JSON view of the current inspect buffer."
+  (let ((source (current-buffer)))
+    (when-let* ((json net--json-buffer))
+      (when (and (buffer-live-p json)
+                 (with-current-buffer json
+                   (eq net--json-source source)))
+        (with-current-buffer json
+          (net--json-render source))))))
+
+(defun net--json-revert (&rest _args)
+  "Redraw the current JSON buffer from its inspect buffer."
+  (when (buffer-live-p net--json-source)
+    (net--json-render net--json-source)))
+
+(define-derived-mode net-json-mode js-json-mode "Net JSON"
+  "Major mode for the JSON view of a network inspect buffer.
+The buffer shows the report of the buffer in `net--json-source' as
+pretty printed JSON.  It is read-only.  `net-json-view' creates it,
+and a refresh of the report buffer redraws it.
+
+\\{net-json-mode-map}"
+  :group 'net
+  (setq-local revert-buffer-function #'net--json-revert)
+  (setq-local default-directory
+              (file-name-as-directory temporary-file-directory))
+  (setq buffer-read-only t))
+
+;;;###autoload
+(defun net-json-view ()
+  "Show the JSON report of the current network inspect buffer.
+The buffer holds the report that drew this buffer, plus the RDAP
+answer when one arrived.  The command reuses the buffer it created
+before: a second call switches to that buffer, and a refresh of this
+buffer redraws it."
+  (interactive)
+  (unless (derived-mode-p 'net-mode)
+    (user-error "Not a network inspect buffer"))
+  (unless net--report
+    (user-error "No network report to show"))
+  (let* ((source (current-buffer))
+         (name (format net-json-buffer-name-format (buffer-name source)))
+         (linked (and (buffer-live-p net--json-buffer)
+                      (with-current-buffer net--json-buffer
+                        (eq major-mode 'net-json-mode))
+                      net--json-buffer))
+         (buffer (or linked (get-buffer name))))
+    (if (and (buffer-live-p buffer)
+             (with-current-buffer buffer (eq major-mode 'net-json-mode)))
+        (with-current-buffer buffer
+          (setq-local net--json-source source)
+          (net--json-render source))
+      (setq buffer (get-buffer-create (generate-new-buffer-name name)))
+      (with-current-buffer buffer
+        (net-json-mode)
+        (setq-local net--json-source source)
+        (net--json-render source)))
+    (setq-local net--json-buffer buffer)
+    (pop-to-buffer buffer)))
 
 (defun net--split-csv-line (line)
   "Split LINE at commas into a list of fields.
@@ -676,6 +965,7 @@ when invoked."
     (when (net--rdap-in-flight-p target)
       (user-error "RDAP lookup already in flight"))
     (setq-local net--rdap-in-flight t)
+    (setq-local net--rdap-raw nil)
     (message "RDAP: %s" url)
     (setq-local net--rdap-request-buffer
                 (url-retrieve
@@ -728,18 +1018,21 @@ still replaces the warning line."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (when (net--rdap-finish buffer)
+        (setq-local net--rdap-raw nil)
         (let ((inhibit-read-only t))
           (net--rdap-begin-section)
           (net-insert-warning
            (format "Lookup timed out after %d seconds" net-rdap-timeout))
           (net-insert-field "Source" (net--rdap-url))
-          (set-buffer-modified-p nil))))))
+          (set-buffer-modified-p nil))
+        (net--json-redraw)))))
 
 (defun net--rdap-callback (buffer status)
   "Render the RDAP response in BUFFER.
 STATUS is the `url-retrieve' status plist."
   (let ((data nil)
         (status-code nil)
+        (raw nil)
         (network-error (plist-get status :error))
         (parse-error nil)
         (response-buffer (current-buffer)))
@@ -749,15 +1042,20 @@ STATUS is the `url-retrieve' status plist."
             (setq status-code (bound-and-true-p url-http-response-status))
             (goto-char (or (bound-and-true-p url-http-end-of-headers)
                            (point-min)))
-            (setq data (json-parse-buffer :object-type 'alist
-                                          :array-type 'list
-                                          :null-object nil
-                                          :false-object nil)))
+            (let ((body (buffer-substring-no-properties (point) (point-max))))
+              (setq raw (if (multibyte-string-p body)
+                            body
+                          (decode-coding-string body 'utf-8)))
+              (setq data (json-parse-string raw :object-type 'alist
+                                            :array-type 'list
+                                            :null-object nil
+                                            :false-object nil))))
         (error (setq parse-error err))))
     (net--rdap-release-buffer response-buffer buffer)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (net--rdap-finish buffer)
+        (setq-local net--rdap-raw (and data raw))
         (let ((inhibit-read-only t))
           (net--rdap-begin-section)
           (cond
@@ -772,7 +1070,8 @@ STATUS is the `url-retrieve' status plist."
              (format "Lookup failed: %s" (or parse-error "empty answer"))))
            (t (net--rdap-render data)))
           (net-insert-field "Source" (net--rdap-url))
-          (set-buffer-modified-p nil))))))
+          (set-buffer-modified-p nil))
+        (net--json-redraw)))))
 
 (defun net--rdap-entity-name (entity)
   "Return the display name of the RDAP ENTITY alist."
@@ -850,12 +1149,14 @@ STATUS is the `url-retrieve' status plist."
   "<backtab>" #'backward-button
   "w" #'net-copy-value
   "b" #'net-rdap
+  "J" #'net-json-view
   "i" #'net-inspect)
 
 (define-derived-mode net-mode special-mode "Net"
   "Base major mode for inspecting a network address.
-Derived modes set `net--render-function' and render their fields with
-`net-insert-heading', `net-insert-field' and `net-insert-link'.
+A derived mode sets `net--render-function' to a function that calls
+`net--render-report' with its `net-KIND-report' value, and
+`net-json-view' shows that report as JSON.
 
 \\{net-mode-map}"
   :group 'net

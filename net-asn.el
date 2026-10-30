@@ -484,105 +484,196 @@ as a pinned copy instead of a meaningless date."
         (format "%s, %s ranges, %s" (file-name-nondirectory file) count date)
       (format "%s, %s" (file-name-nondirectory file) date))))
 
-;;; Display
+;;; Report
 
-(defun net-asn--insert-identity-section (parsed)
-  "Insert the identity fields of PARSED."
-  (net-insert-heading "Autonomous System")
+(defun net-asn--report-identity-section (parsed classification)
+  "Return the identity section of PARSED and CLASSIFICATION."
   (let* ((asn (plist-get parsed :asn))
-         (classification (net-asn-classification asn)))
-    (net-insert-field "AS number" asn)
-    (net-insert-field "AS notation" (net-asn-canonical parsed))
-    (when-let* ((asdot (net-asn-asdot asn)))
-      (net-insert-field "ASDOT" asdot))
-    (net-insert-field "Class" (if (> asn 65535) "32-bit" "16-bit"))
-    (net-insert-field "Status" (car classification))
-    (net-insert-field "Reference" (cdr classification))))
+         (asdot (net-asn-asdot asn)))
+    (list :json :identity
+          :heading "Autonomous System"
+          :items (delq nil
+                       (list '(:field "AS number" :asn)
+                             '(:field "AS notation" :notation)
+                             (when asdot '(:field "ASDOT" :asdot))
+                             '(:field "Class" :class)
+                             '(:field "Status" :status)
+                             '(:field "Reference" :reference)))
+          :asn asn
+          :notation (net-asn-canonical parsed)
+          :asdot asdot
+          :class (if (> asn 65535) "32-bit" "16-bit")
+          :status (car classification)
+          :reference (cdr classification))))
 
-(defun net-asn--insert-registry-section (asn)
-  "Insert the registry block of ASN."
-  (net-insert-heading "Registry")
-  (if-let* ((row (net-asn-registry-row asn)))
-      (let ((range (plist-get row :range)))
-        (net-insert-field "Block" (format "%d-%d" (car range) (cdr range)))
-        (net-insert-field "Registry" (plist-get row :description))
-        (when-let* ((whois (plist-get row :whois)))
-          (when (not (string-empty-p whois))
-            (net-insert-field "WHOIS" whois))))
-    (net-insert-field "Block" "not in the IANA registry")))
+(defun net-asn--report-registry-section (asn)
+  "Return the IANA registry section of ASN."
+  (let ((row (net-asn-registry-row asn)))
+    (if (null row)
+        (list :json :registry
+              :heading "Registry"
+              :items (list '(:field "Block" :block :blockText))
+              :block nil
+              :blockText "not in the IANA registry")
+      (let* ((range (plist-get row :range))
+             (whois (plist-get row :whois))
+             (whois (and whois (not (string-empty-p whois)) whois)))
+        (list :json :registry
+              :heading "Registry"
+              :items (delq nil
+                           (list '(:field "Block" :block)
+                                 '(:field "Registry" :registry)
+                                 (when whois '(:field "WHOIS" :whois))))
+              :block (format "%d-%d" (car range) (cdr range))
+              :registry (plist-get row :description)
+              :whois whois)))))
 
-(defun net-asn--insert-metadata-section (entry)
-  "Insert the as-metadata fields of ENTRY."
+(defun net-asn--report-metadata-section (entry)
+  "Return the as-metadata section of ENTRY."
   (let* ((metadata (alist-get 'metadata entry))
-         (stats (alist-get 'stats entry)))
-    (net-insert-heading "Metadata")
+         (code (alist-get 'countryCode metadata))
+         (name (alist-get 'country metadata))
+         (category (alist-get 'category metadata))
+         (role (alist-get 'networkRole metadata)))
     (if (or (null entry) (null metadata))
-        (net-insert-field "Database" "no entry for this AS number")
-      (net-insert-field "Handle" (alist-get 'handle metadata))
-      (net-insert-field "Description" (alist-get 'description metadata))
-      (net-insert-field "Country"
-                        (let ((code (alist-get 'countryCode metadata))
-                              (name (alist-get 'country metadata)))
-                          (cond ((and code name) (format "%s (%s)" name code))
-                                (code code)
-                                (t nil))))
-      (net-insert-field "Origin" (alist-get 'origin metadata))
-      (when-let* ((category (alist-get 'category metadata)))
-        (net-insert-field "Category"
-                          (or (alist-get category net-asn--categories
-                                         nil nil #'equal)
-                              category)))
-      (when-let* ((role (alist-get 'networkRole metadata)))
-        (net-insert-field "Network role"
-                          (or (alist-get role net-asn--roles nil nil #'equal)
-                              role)))
-      (net-insert-field "Registered" (alist-get 'registered metadata))
-      (net-insert-field "Last modified" (alist-get 'lastModified metadata))
-      (net-insert-field "Last announced" (alist-get 'lastAnnounced entry))
-      (when stats
-        (net-insert-heading "Routing Statistics")
-        (dolist (family '((ipv4 . "IPv4") (ipv6 . "IPv6")))
-          (when-let* ((data (alist-get (car family) stats)))
-            (net-insert-field (format "%s prefixes" (cdr family))
-                              (alist-get 'prefixes data))
-            (net-insert-field (format "%s aggregated" (cdr family))
-                              (alist-get 'prefixesAggregated data))
-            (net-insert-field (format "%s largest prefix" (cdr family))
-                              (when-let* ((length (alist-get 'largestPrefix data)))
-                                (format "/%d" length)))
-            (net-insert-field (format "%s addresses" (cdr family))
-                              (alist-get 'totalAddresses data))))
-        (let ((connectivity (alist-get 'connectivity stats)))
-          (when connectivity
-            (net-insert-heading "Connectivity")
-            (dolist (field '((providers . "Providers")
-                             (customers . "Customers")
-                             (peers . "Peers")
-                             (degree . "Degree")
-                             (reach . "Reach (customer cone)")))
-              (net-insert-field (cdr field)
-                                (alist-get (car field) connectivity)))
-            (let ((providers (alist-get 'providerAsns connectivity)))
-              (when providers
-                (net-insert-link-list "Upstream Providers"
-                                      (mapcar (lambda (provider)
-                                                (cons 'asn
-                                                      (format "AS%d" provider)))
-                                              providers))))))))))
+        (list :json :metadata
+              :heading "Metadata"
+              :items (list '(:text "Database" :database))
+              :database "no entry for this AS number")
+      (list :json :metadata
+            :heading "Metadata"
+            :items (delq nil
+                         (list '(:field "Handle" :handle)
+                               '(:field "Description" :description)
+                               '(:field "Country" :country :countryText)
+                               '(:field "Origin" :origin)
+                               (when category
+                                 '(:field "Category" :categoryName))
+                               (when role '(:field "Network role"
+                                                   :networkRoleName))
+                               '(:field "Registered" :registered)
+                               '(:field "Last modified" :lastModified)
+                               '(:field "Last announced" :lastAnnounced)))
+            :handle (alist-get 'handle metadata)
+            :description (alist-get 'description metadata)
+            :country name
+            :countryCode code
+            :countryText (cond ((and code name) (format "%s (%s)" name code))
+                               (code code)
+                               (t nil))
+            :origin (alist-get 'origin metadata)
+            :category category
+            :categoryName (when category
+                            (or (alist-get category net-asn--categories
+                                           nil nil #'equal)
+                                category))
+            :networkRole role
+            :networkRoleName (when role
+                               (or (alist-get role net-asn--roles nil nil
+                                              #'equal)
+                                   role))
+            :registered (alist-get 'registered metadata)
+            :lastModified (alist-get 'lastModified metadata)
+            :lastAnnounced (alist-get 'lastAnnounced entry)))))
+
+(defun net-asn--report-statistics-section (stats)
+  "Return the routing statistics section of STATS, or nil."
+  (when stats
+    (let (items values)
+      (dolist (family '((ipv4 "IPv4") (ipv6 "IPv6")))
+        (let ((data (alist-get (car family) stats)))
+          (when data
+            (let* ((name (symbol-name (car family)))
+                   (label (cadr family))
+                   (prefixes (intern (concat ":" name "Prefixes")))
+                   (aggregated (intern (concat ":" name "Aggregated")))
+                   (largest (intern (concat ":" name "LargestPrefix")))
+                   (largest-text
+                    (intern (concat ":" name "LargestPrefixText")))
+                   (addresses (intern (concat ":" name "Addresses")))
+                   (length (alist-get 'largestPrefix data)))
+              (setq items
+                    (append items
+                            (list (list :field (format "%s prefixes" label)
+                                        prefixes)
+                                  (list :field (format "%s aggregated" label)
+                                        aggregated)
+                                  (list :field (format "%s largest prefix"
+                                                       label)
+                                        largest largest-text)
+                                  (list :field (format "%s addresses" label)
+                                        addresses))))
+              (setq values
+                    (append values
+                            (list prefixes (alist-get 'prefixes data)
+                                  aggregated
+                                  (alist-get 'prefixesAggregated data)
+                                  largest length
+                                  largest-text
+                                  (when length (format "/%d" length))
+                                  addresses
+                                  (alist-get 'totalAddresses data))))))))
+      (when items
+        (append (list :json :routingStatistics
+                      :heading "Routing Statistics"
+                      :items items)
+                values)))))
+
+(defun net-asn--report-connectivity-section (stats)
+  "Return the connectivity section of STATS, or nil."
+  (when-let* ((connectivity (alist-get 'connectivity stats)))
+    (let ((providers (alist-get 'providerAsns connectivity))
+          (items nil))
+      (dolist (field '((providers . "Providers")
+                       (customers . "Customers")
+                       (peers . "Peers")
+                       (degree . "Degree")
+                       (reach . "Reach (customer cone)")))
+        (push (list :field (cdr field) (car field)) items))
+      (when providers
+        (push (list :links "Upstream Providers" 'asn :upstreamProviders
+                    :upstreamProviderLinks)
+              items))
+      (list :json :connectivity
+            :heading "Connectivity"
+            :items (nreverse items)
+            :providers (alist-get 'providers connectivity)
+            :customers (alist-get 'customers connectivity)
+            :peers (alist-get 'peers connectivity)
+            :degree (alist-get 'degree connectivity)
+            :reach (alist-get 'reach connectivity)
+            :upstreamProviders providers
+            :upstreamProviderLinks (mapcar (lambda (provider)
+                                             (format "AS%d" provider))
+                                           providers)))))
+
+(defun net-asn-report (asn)
+  "Return the report of the autonomous system number ASN.
+The report holds the fields that the buffer shows and the RDAP
+identity of the number."
+  (let* ((parsed (net-asn-parse asn))
+         (number (plist-get parsed :asn))
+         (classification (net-asn-classification number))
+         (entry (net-asn-entry number))
+         (stats (alist-get 'stats entry)))
+    (list
+     :summary (format "%s, %s" (car classification) (cdr classification))
+     :rdap-type "autnum"
+     :rdap-key (number-to-string number)
+     :rdap (list :objectClassName "autnum"
+                 :startAutnum number
+                 :endAutnum number)
+     :sections
+     (delq nil
+           (list (net-asn--report-identity-section parsed classification)
+                 (net-asn--report-registry-section number)
+                 (net-asn--report-metadata-section entry)
+                 (net-asn--report-statistics-section stats)
+                 (net-asn--report-connectivity-section stats))))))
 
 (defun net-asn--display ()
   "Render the AS number in the current buffer."
-  (let* ((parsed (net-asn-parse net--value))
-         (asn (plist-get parsed :asn))
-         (classification (net-asn-classification asn))
-         (entry (net-asn-entry asn)))
-    (net-set-summary (format "%s, %s" (car classification)
-                             (cdr classification)))
-    (net-asn--insert-identity-section parsed)
-    (net-asn--insert-registry-section asn)
-    (net-asn--insert-metadata-section entry)
-    (setq-local net--rdap-type "autnum"
-                net--rdap-key (number-to-string asn))))
+  (net--render-report (net-asn-report net--value)))
 
 ;;; Mode and entry points
 

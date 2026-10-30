@@ -1027,7 +1027,8 @@ the start of the buffer."
   (with-temp-buffer
     (net-domain-mode)
     (let ((inhibit-read-only t))
-      (net-domain--insert-label-section (net-domain-parse "Example.COM")))
+      (net--render-section
+       (net-domain--report-label-section (net-domain-parse "Example.COM"))))
     (should-not (string-match-p ", ASCII" (buffer-string)))
     (should (string-match-p "^1\\. COM" (buffer-string)))))
 
@@ -1286,6 +1287,166 @@ the start of the buffer."
     (let ((target (embark-net-target-at-point)))
       (should (eq (car target) 'net-address))
       (should (equal (cadr target) "192.0.2.1")))))
+
+;;; Reports and JSON view
+
+(defun net-tests--kill-json-buffers ()
+  "Kill the JSON view buffers that a test made."
+  (dolist (buffer (buffer-list))
+    (when (string-match-p "\\`\\*net-.*\\* JSON\\'" (buffer-name buffer))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-report-keys ()
+  "A report holds typed values under JSON keys."
+  (let* ((report (net-cidr-report "192.0.2.0/24"))
+         (rdap (plist-get report :rdap))
+         (sections (plist-get report :sections))
+         (prefix (car sections))
+         (classification (cadr sections)))
+    (should (equal (plist-get rdap :objectClassName) "ip network"))
+    (should (equal (plist-get rdap :ipVersion) "v4"))
+    (should (= (plist-get prefix :totalAddresses) 256))
+    (should (= (plist-get prefix :usableHosts) 254))
+    (should (eq (plist-get classification :private) :json-false))
+    (should (equal (plist-get report :rdap-type) "ip"))))
+
+(ert-deftest net-tests-report-every-kind ()
+  "Every mode builds a report without a buffer."
+  (dolist (form '((net-ip-report "192.0.2.1")
+                  (net-cidr-report "192.0.2.0/24")
+                  (net-mac-report "00:00:5e:00:53:01")
+                  (net-asn-report "AS13335")
+                  (net-domain-report "example.com")
+                  (net-vsock-report "2:1024")))
+    (let ((report (eval form t)))
+      (should (or (null (plist-get report :summary))
+                  (stringp (plist-get report :summary))))
+      (should (plist-get report :sections))
+      (dolist (section (plist-get report :sections))
+        (should (keywordp (plist-get section :json)))
+        (should (stringp (plist-get section :heading)))))))
+
+(ert-deftest net-tests-report-rdap-identity ()
+  "RDAP identities use the object class names of the registry."
+  (should (equal (plist-get (plist-get (net-ip-report "192.0.2.1") :rdap)
+                            :objectClassName)
+                 "ip network"))
+  (should (equal (plist-get (plist-get (net-asn-report "AS13335") :rdap)
+                            :objectClassName)
+                 "autnum"))
+  (should (equal (plist-get (plist-get (net-domain-report "example.com")
+                                      :rdap)
+                            :objectClassName)
+                 "domain"))
+  (should-not (plist-get (net-mac-report "00:00:5e:00:53:01") :rdap))
+  (should-not (plist-get (net-vsock-report "2:1024") :rdap)))
+
+(ert-deftest net-tests-json-view-buffer ()
+  "The JSON view is a read-only second buffer."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (should (eq major-mode 'net-json-mode))
+          (should buffer-read-only)
+          (should (string-match-p "\"schema\": 1" (buffer-string)))
+          (should (string-match-p "\"kind\": \"ip\"" (buffer-string)))
+          (should (string-match-p "\"objectClassName\": \"ip network\""
+                                  (buffer-string)))
+          (should (equal (buffer-name)
+                         "*net-ip 192.0.2.1* JSON")))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-shared ()
+  "A second call switches to the buffer it made before."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((first (current-buffer)))
+            (with-current-buffer buffer
+              (net-json-view)
+              (should (eq (current-buffer) first)))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-redraw ()
+  "A refresh of the report buffer redraws the JSON buffer."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((json (current-buffer)))
+            (with-current-buffer buffer
+              (setq net--value "192.0.2.2")
+              (net-refresh))
+            (with-current-buffer json
+              (should (string-match-p "\"192.0.2.2\"" (buffer-string))))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-revert ()
+  "Reverting the JSON buffer renders the report again."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((json (current-buffer)))
+            (with-current-buffer buffer
+              (setq net--value "192.0.2.3"))
+            (with-current-buffer json
+              (revert-buffer)
+              (should (string-match-p "\"192.0.2.3\"" (buffer-string))))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-rdap-answer ()
+  "The parsed RDAP answer joins the report under its own key."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((json (current-buffer)))
+            (with-current-buffer buffer
+              (setq-local net--rdap-raw
+                          "{\"handle\":\"TEST-1\",\"status\":[\"active\"]}")
+              (net--json-redraw))
+            (with-current-buffer json
+              (should (string-match-p "\"rdapAnswer\"" (buffer-string)))
+              (should (string-match-p "\"handle\": \"TEST-1\""
+                                      (buffer-string))))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-big-integer ()
+  "An integer beyond 2^53 leaves the JSON as a string."
+  (let ((buffer (net-ip-inspect "2001:db8::1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((value (plist-get (net-ip-parse "2001:db8::1") :value)))
+            (should (string-match-p
+                     (concat "\"integer\": \"" (number-to-string value) "\"")
+                     (buffer-string)))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-flags ()
+  "Booleans reach the JSON as true and false."
+  (let ((buffer (net-mac-inspect "aa:bb:cc:dd:ee:ff")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (should (string-match-p "\"multicast\": false" (buffer-string)))
+          (should (string-match-p "\"local\": true" (buffer-string))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-refuses-other-buffers ()
+  "The JSON view belongs to network inspect buffers only."
+  (with-temp-buffer
+    (should-error (net-json-view) :type 'user-error)))
 
 ;;; Declarations
 

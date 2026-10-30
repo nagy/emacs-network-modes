@@ -290,7 +290,7 @@ the name, so the loader adds a Punycode alias for every IDN rule."
                                           "\\."))))
       (net-domain--psl-match labels tables))))
 
-;;; Display
+;;; Report
 
 (defun net-domain--hostname-p (labels)
   "Return non-nil when LABELS form a valid hostname.
@@ -299,41 +299,6 @@ rejected during parsing."
   (cl-every (lambda (label)
               (not (string-match-p "_" label)))
             labels))
-
-(defun net-domain--insert-name-section (parsed)
-  "Insert the name fields of PARSED."
-  (net-insert-heading "Domain")
-  (let* ((labels (plist-get parsed :labels))
-         (text (plist-get parsed :text))
-         (ascii (net-domain-ascii parsed)))
-    (net-insert-field "Domain" text)
-    (when (not (string= (downcase text) ascii))
-      (net-insert-field "ASCII" ascii))
-    (net-insert-field "Labels" (length labels))
-    (net-insert-field "Length (octets)" (length ascii))
-    (net-insert-field "Fully qualified"
-                      (if (plist-get parsed :trailing-dot) "yes" "no"))
-    (net-insert-field "TLD" (car (last labels)))
-    (net-insert-field "Hostname"
-                      (if (net-domain--hostname-p labels) "valid" "invalid"))
-    (when (plist-get parsed :unicode)
-      (net-insert-text "Note"
-                       "IDNA normalization is limited to lowercasing."))))
-
-(defun net-domain--insert-label-section (parsed)
-  "Insert the label table of PARSED."
-  (net-insert-heading "Labels")
-  (let ((labels (plist-get parsed :labels))
-        (index 0))
-    (dolist (label labels)
-      (let ((ascii (net-domain-punycode-label (downcase label))))
-        (net-insert-field (format "%d. %s" index label)
-                          (format "%d octets%s"
-                                  (length ascii)
-                                  (if (string= ascii (downcase label))
-                                      ""
-                                    (format ", ASCII %s" ascii)))))
-      (cl-incf index))))
 
 (defun net-domain--psl-fields (parsed)
   "Return the Public Suffix List fields of PARSED as a plist.
@@ -357,34 +322,120 @@ Return nil when the list file is not available.  The plist holds
                            (t "default rule (no match)"))
             :registrable registrable))))
 
-(defun net-domain--insert-psl-section (parsed)
-  "Insert the Public Suffix List fields of PARSED."
-  (net-insert-heading "Public Suffix")
+(defun net-domain--report-name-section (parsed ascii)
+  "Return the name section of PARSED with ASCII form ASCII."
+  (let* ((labels (plist-get parsed :labels))
+         (text (plist-get parsed :text))
+         (hostname (net-domain--hostname-p labels)))
+    (list :json :name
+          :heading "Domain"
+          :items (delq nil
+                       (list '(:field "Domain" :domain)
+                             (unless (string= (downcase text) ascii)
+                               '(:field "ASCII" :ascii))
+                             '(:field "Labels" :labelCount)
+                             '(:field "Length (octets)" :octets)
+                             '(:field "Fully qualified" :fullyQualified
+                                      :fullyQualifiedText)
+                             '(:field "TLD" :tld)
+                             '(:field "Hostname" :hostname :hostnameText)
+                             (when (plist-get parsed :unicode)
+                               '(:text "Note" :note))))
+          :domain text
+          :ascii (unless (string= (downcase text) ascii) ascii)
+          :labelCount (length labels)
+          :octets (length ascii)
+          :fullyQualified (if (plist-get parsed :trailing-dot)
+                              t
+                            :json-false)
+          :fullyQualifiedText (if (plist-get parsed :trailing-dot)
+                                  "yes"
+                                "no")
+          :tld (car (last labels))
+          :hostname (if hostname t :json-false)
+          :hostnameText (if hostname "valid" "invalid")
+          :note (when (plist-get parsed :unicode)
+                  "IDNA normalization is limited to lowercasing."))))
+
+(defun net-domain--report-label-section (parsed)
+  "Return the label table section of PARSED."
+  (let ((labels (plist-get parsed :labels))
+        (index 0)
+        (records nil))
+    (dolist (label labels)
+      (let* ((ascii (net-domain-punycode-label (downcase label)))
+             (same (string= ascii (downcase label))))
+        (push (list :items
+                    (list (list :field (format "%d. %s" index label)
+                                (format "%d octets%s"
+                                        (length ascii)
+                                        (if same
+                                            ""
+                                          (format ", ASCII %s" ascii)))))
+                    :json (list :label label
+                                :octets (length ascii)
+                                :punycode (unless same ascii)))
+              records))
+      (cl-incf index))
+    (list :json :labels
+          :heading "Labels"
+          :records (nreverse records))))
+
+(defun net-domain--report-psl-section (parsed)
+  "Return the Public Suffix List section of PARSED."
   (let ((fields (net-domain--psl-fields parsed)))
     (if (null fields)
-        (net-insert-text "List" "unset (customize `net-domain-psl-file')")
-      (net-insert-field "Suffix" (plist-get fields :suffix))
-      (net-insert-field "Suffix labels" (plist-get fields :labels))
-      (net-insert-field "Section" (plist-get fields :section))
-      (if-let* ((registrable (plist-get fields :registrable)))
-          (net-insert-link "Registrable domain" 'domain registrable)
-        (net-insert-field "Registrable domain"
-                          "the name is itself a public suffix")))))
+        (list :json :publicSuffix
+              :heading "Public Suffix"
+              :items (list '(:text "List" :list))
+              :list "unset (customize `net-domain-psl-file')")
+      (let ((registrable (plist-get fields :registrable)))
+        (list :json :publicSuffix
+              :heading "Public Suffix"
+              :items (list '(:field "Suffix" :suffix)
+                           '(:field "Suffix labels" :suffixLabels)
+                           '(:field "Section" :section)
+                           (if registrable
+                               '(:link "Registrable domain" domain
+                                       :registrable)
+                             '(:field "Registrable domain" :registrable
+                                      :registrableText)))
+              :suffix (plist-get fields :suffix)
+              :suffixLabels (plist-get fields :labels)
+              :section (plist-get fields :section)
+              :registrable registrable
+              :registrableText (unless registrable
+                                 "the name is itself a public suffix"))))))
+
+(defun net-domain-report (domain)
+  "Return the report of the DOMAIN name.
+The report holds the fields that the buffer shows and the RDAP
+identity of the name."
+  (let* ((parsed (net-domain-parse domain))
+         (text (plist-get parsed :text))
+         (ascii (net-domain-ascii parsed))
+         (fields (net-domain--psl-fields parsed))
+         (registrable (plist-get fields :registrable)))
+    (list
+     :summary (when fields
+                (if registrable
+                    (format "suffix %s, registrable %s"
+                            (plist-get fields :suffix) registrable)
+                  (format "suffix %s" (plist-get fields :suffix))))
+     :rdap-type "domain"
+     :rdap-key ascii
+     :rdap (append (list :objectClassName "domain" :ldhName ascii)
+                   (unless (string= (downcase text) ascii)
+                     (list :unicodeName text)))
+     :sections
+     (delq nil
+           (list (net-domain--report-name-section parsed ascii)
+                 (net-domain--report-label-section parsed)
+                 (net-domain--report-psl-section parsed))))))
 
 (defun net-domain--display ()
   "Render the domain name in the current buffer."
-  (let ((parsed (net-domain-parse net--value)))
-    (when-let* ((fields (net-domain--psl-fields parsed)))
-      (net-set-summary
-       (if-let* ((registrable (plist-get fields :registrable)))
-           (format "suffix %s, registrable %s"
-                   (plist-get fields :suffix) registrable)
-         (format "suffix %s" (plist-get fields :suffix)))))
-    (net-domain--insert-name-section parsed)
-    (net-domain--insert-label-section parsed)
-    (net-domain--insert-psl-section parsed)
-    (setq-local net--rdap-type "domain"
-                net--rdap-key (net-domain-ascii parsed))))
+  (net--render-report (net-domain-report net--value)))
 
 ;;; Mode and entry points
 

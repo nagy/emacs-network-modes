@@ -30,7 +30,7 @@ network, and it runs only when invoked.
 | `embark-net.el`     | Opt-in Embark target and actions (`embark-net-mode`)                    |
 | `net-xref.el`       | Opt-in xref backend                                                     |
 | `net-evil.el`       | Opt-in evil bindings (`net-evil-mode`)                                  |
-| `net-tests.el`      | ERT suite (86 tests)                                                    |
+| `net-tests.el`      | ERT suite (99 tests)                                                    |
 | `net-evil-tests.el` | ERT suite for the evil bindings (8 tests)                               |
 | `flake.nix`         | Database inputs and derivation, `melpaBuild`, outputs and checks        |
 | `tools/pack-network-data.el` | Packs the range databases into fixed-width tables              |
@@ -77,6 +77,59 @@ a sentence period still resolves.  `net--thing-candidates` also looks
 inside a URL, so the host of `https://example.org:8443/path` resolves
 to `example.org`.
 
+### Reports and the JSON view
+
+Every mode owns a pure `net-KIND-report` that returns one plist.  The
+plist carries `:summary`, `:sections` and, when the value has one, the
+`rdap` identity plus `:rdap-type` and `:rdap-key`.  `net-KIND--display`
+is a single call to `net--render-report`, so the report and the buffer
+cannot drift apart.
+
+Report keys spell the JSON keys: `:objectClassName`, `:totalAddresses`,
+`:startAutnum`.  RDAP names (RFC 9083) win where the concept exists,
+which covers `ip`, `cidr`, `asn` and `domain`.  A MAC address and a
+vsock address carry no `rdap` member, because no registry defines
+their object classes.  Display labels never reach the JSON, so a
+renderer can reword a row without breaking a consumer.
+
+A section holds either `:items` plus its values, one object, or
+`:records` with one `:json` plist and one list of items per row, an
+array of objects.  A records section can also hold `:items`, which it
+renders after the rows.  Those items belong to the buffer only, so a
+caveat such as the vsock service note never reaches the JSON.  An item is one of five lists, matching the five
+renderer helpers:
+
+| Item | Renders |
+| ---- | ------- |
+| `(:field LABEL KEY [TEXT])` | `net-insert-field` |
+| `(:link LABEL KIND KEY [TEXT])` | `net-insert-link` |
+| `(:links LABEL KIND KEY [TEXTS])` | `net-insert-link-list` |
+| `(:text LABEL KEY)` | `net-insert-text` |
+| `(:warning KEY)` | `net-insert-warning` |
+
+`KEY` names a key of the surrounding plist.  `TEXT` and `TEXTS` only
+change what the buffer shows, so `:privateText` can read
+`yes (RFC 1918)` while `:private` holds `t`.  A boolean member holds
+`t` or `:json-false`, never `nil`, because `nil` encodes as `null`.
+`net--flag` converts the `True`, `False` and `N/A` cells of the
+registry CSV files.
+
+`net--json-value` walks a report: a plist becomes an object, any other
+list an array, and an integer beyond 2^53-1 a string, because
+`json-encode` prints exact bignums that other parsers round.  IPv6
+values and host counts need that.  `:json-extra` adds members that the
+buffer does not show, such as a country code next to the country name.
+
+`net-json-view` (`J`) creates a `net-json-mode` buffer, which derives
+from `js-json-mode`.  The buffer stays read-only and shares itself: the
+source buffer keeps it in `net--json-buffer`, the JSON buffer keeps the
+source in `net--json-source`, `net-refresh` and both RDAP paths call
+`net--json-redraw`, and `gr` calls `net--json-revert`.  The buffer name
+comes from `net-json-buffer-name-format`, the source name plus ` JSON`.
+After a successful RDAP lookup `net--rdap-raw` holds the response body,
+which the view parses again with hash tables and embeds whole under
+`rdapAnswer`; the renderer keeps the alist parse.
+
 ### Buffers and rendering
 
 `net-display` creates or reuses `*net-KIND VALUE*`, calls the mode,
@@ -108,7 +161,7 @@ only the helpers in `net-mode.el`:
 Imenu index.  `net-mode-map` binds `TAB` and `<backtab>` to
 `forward-button` and `backward-button`, so buttons work without a mouse
 or `button-mode`, which would remove the buttons when the user turns it
-off.
+off.  `J` opens the JSON view.
 
 A mode sets `net--rdap-type` and `net--rdap-key` at the end of its
 renderer when the value has an RDAP identity.
@@ -242,10 +295,11 @@ It requires evil and `net-mode`, and it binds keys in normal and
 visual state only.
 
 Evil state maps take precedence over a major mode map, so `RET`, `q`,
-`w`, `b` and `i` would run an evil command instead of the inspect
+`w`, `b`, `J` and `i` would run an evil command instead of the inspect
 command.  The bindings put the commands of `net-mode-map` back:
 `RET` pushes a button, `q` quits the window, `gr` reverts, `w` copies
-the value, `b` fetches RDAP and `i` inspects the address at point.
+the value, `b` fetches RDAP, `J` opens the JSON view and `i` inspects
+the address at point.
 The motions `j`, `k`, `gg`, `G`, `C-d`, `C-u`, `/`, `n` and `N` stay
 evil.  Visual state binds only `RET`, because it needs its text
 objects.  Evil keeps `TAB` for its jump motion, so `net-evil-keys`
@@ -364,6 +418,13 @@ suffix, which package-build and the lint gates exclude.
 - Field labels and values render through the helpers in `net-mode.el`;
   do not insert raw text in a renderer.  `net--insert-label` keeps at
   least one space after long labels.
+- A new field belongs in the report builder, never in the renderer:
+  add its key, its item and its value in `net-KIND-report`, and both the
+  buffer and the JSON view follow.  Keep a display label out of the
+  item key, and keep the JSON name in the key.
+- Booleans in a report hold `t` or `:json-false`.  A `nil` value means
+  unknown and encodes as `null`, so use `TEXT` for a row that must read
+  `no` while the member holds a real false.
 - Unknown values render as `unknown`; invalid input signals
   `user-error` from the inspect command, never from a renderer.
 - Read CSV through `net--read-csv-file`, so a quoted field can span

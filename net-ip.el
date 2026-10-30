@@ -461,122 +461,22 @@ multicast blocks stay classified."
               (seq-filter (lambda (entry) (plist-get entry :always))
                           builtin)))))
 
-;;; Display
+;;; Report
 
-(defun net-ip--insert-address-section (parsed)
-  "Insert the address fields of PARSED."
-  (net-insert-heading "Address")
-  (let* ((value (plist-get parsed :value))
-         (version (plist-get parsed :version)))
-    (net-insert-field "Address" (net-ip-canonical parsed))
-    (net-insert-field "Version" (format "IPv%d" version))
-    (net-insert-field "Integer" value)
-    (net-insert-field "Hex" (format "0x%x" value))
-    (if (= version 4)
-        (net-insert-field "Binary"
-                          (mapconcat (lambda (octet)
-                                       (let ((bits nil))
-                                         (dotimes (index 8)
-                                           (push (if (zerop (logand (ash octet (- (- 7 index))) 1))
-                                                     ?0 ?1)
-                                                 bits))
-                                         (apply #'string (nreverse bits))))
-                                     (list (logand (ash value -24) #xff)
-                                           (logand (ash value -16) #xff)
-                                           (logand (ash value -8) #xff)
-                                           (logand value #xff))
-                                     "."))
-      (net-insert-field "Expanded" (net-ip--format-ipv6-full value)))))
-
-(defun net-ip--insert-classification-section (parsed matches)
-  "Insert the special-purpose classification of PARSED.
-MATCHES holds the result of `net-ip-matching-blocks' for PARSED."
-  (let* ((value (plist-get parsed :value))
-         (version (plist-get parsed :version)))
-    (net-insert-heading "Classification")
-    (if (null matches)
-        (net-insert-field "Class" "Global unicast (no special-purpose block)")
-      (let* ((best (car matches))
-             (block (plist-get best :block)))
-        (net-insert-field "Class" (plist-get best :name))
-        (net-insert-field "Registry" (plist-get best :rfc))
-        (net-insert-field "Block"
-                          (format "%s/%d"
-                                  (net-ip-format (plist-get block :start) version)
-                                  (plist-get block :prefix)))))
-    (net-insert-field "Private"
-                      (if (net-ip-private-p value version)
-                          (if (= version 4) "yes (RFC 1918)" "yes (RFC 4193)")
-                        "no"))
-    (when (> (length matches) 1)
-      (net-insert-heading "All Special-Purpose Blocks")
-      (dolist (entry matches)
-        (let ((block (plist-get entry :block)))
-          (net-insert-link (plist-get entry :name)
-                           'cidr
-                           (format "%s/%d"
-                                   (net-ip-format (plist-get block :start) version)
-                                   (plist-get block :prefix))))))))
-
-(defun net-ip--insert-related-section (parsed)
-  "Insert the related addresses of PARSED."
-  (let* ((value (plist-get parsed :value))
-         (version (plist-get parsed :version))
-         (text (net-ip-canonical parsed))
-         (host-prefix (if (= version 4) 32 128))
-         (items nil))
-    (push (cons "Host prefix"
-                (cons 'cidr (format "%s/%d" text host-prefix)))
-          items)
-    (cond
-     ((and (= version 6) (net-ip-in-block-p value 6 (net-ip--block "::ffff:0:0/96")))
-      (push (cons "Embedded IPv4"
-                  (cons 'ip (net-ip--format-ipv4 (logand value #xffffffff))))
-            items))
-     ((and (= version 6) (net-ip-in-block-p value 6 (net-ip--block "2002::/16")))
-      (push (cons "6to4 embedded IPv4"
-                  (cons 'ip (net-ip--format-ipv4 (logand (ash value -80) #xffffffff))))
-            items))
-     ((and (= version 6) (net-ip-in-block-p value 6 (net-ip--block "2001::/32")))
-      (push (cons "Teredo server IPv4"
-                  (cons 'ip (net-ip--format-ipv4 (logand (ash value -64) #xffffffff))))
-            items)
-      (push (cons "Teredo client IPv4"
-                  (cons 'ip (net-ip--format-ipv4
-                             (logand (lognot (logand value #xffffffff))
-                                     #xffffffff))))
-            items))
-     ((and (= version 4) (not (net-ip-in-block-p value 4 (net-ip--block "224.0.0.0/4"))))
-      (push (cons "IPv4-mapped IPv6"
-                  (cons 'ip (net-ip--format-ipv6
-                             (logior (ash #xffff 32) value))))
-            items)))
-    (when items
-      (net-insert-heading "Related")
-      (dolist (item (nreverse items))
-        (net-insert-link (car item) (cadr item) (cddr item))))))
-
-(defun net-ip--insert-reverse-section (parsed)
-  "Insert the reverse DNS name of PARSED."
-  (net-insert-heading "Reverse DNS")
-  (net-insert-field "Name"
-                    (net-ip-reverse-dns (plist-get parsed :value)
-                                        (plist-get parsed :version))))
-
-(defun net-ip--insert-geo-section (parsed)
-  "Insert the GeoIP country of PARSED when the database exists."
-  (let* ((version (plist-get parsed :version))
-         (value (plist-get parsed :value))
-         (file (if (= version 4)
-                   net-geo-database-file
-                 net-geo-database-file-v6)))
-    (when (net-data-available-p file)
-      (net-insert-heading "GeoIP")
-      (let ((country (net-geo-country value version)))
-        (if country
-            (net-insert-field "Country" country)
-          (net-insert-field "Country" "no match")))
-      (net-insert-text "Database" (net-geo-description file version)))))
+(defun net-ip--binary-string (value)
+  "Return the dotted binary form of the IPv4 VALUE."
+  (mapconcat (lambda (octet)
+               (let ((bits nil))
+                 (dotimes (index 8)
+                   (push (if (zerop (logand (ash octet (- (- 7 index))) 1))
+                             ?0 ?1)
+                         bits))
+                 (apply #'string (nreverse bits))))
+             (list (logand (ash value -24) #xff)
+                   (logand (ash value -16) #xff)
+                   (logand (ash value -8) #xff)
+                   (logand value #xff))
+             "."))
 
 (defun net-ip--range-prefix (start end version)
   "Return the prefix text of the address range START to END of VERSION.
@@ -595,56 +495,238 @@ Return nil when the range is not exactly one aligned prefix block."
                  (zerop (logand start (1- size))))
         (format "%s/%d" (net-ip-format start version) length)))))
 
-(defun net-ip--insert-asn-section (parsed)
-  "Insert the origin autonomous system of PARSED when the database exists."
+(defun net-ip--report-address-section (parsed)
+  "Return the address section of PARSED."
+  (let* ((value (plist-get parsed :value))
+         (version (plist-get parsed :version)))
+    (list :json :address
+          :heading "Address"
+          :items (list '(:field "Address" :address)
+                       '(:field "Version" :version)
+                       '(:field "Integer" :integer)
+                       '(:field "Hex" :hex)
+                       (if (= version 4)
+                           '(:field "Binary" :binary)
+                         '(:field "Expanded" :expanded)))
+          :address (net-ip-canonical parsed)
+          :version (format "IPv%d" version)
+          :integer value
+          :hex (format "0x%x" value)
+          :binary (when (= version 4) (net-ip--binary-string value))
+          :expanded (when (= version 6)
+                      (net-ip--format-ipv6-full value)))))
+
+(defun net-ip--report-classification-section (parsed matches)
+  "Return the classification section of PARSED and MATCHES."
+  (let* ((value (plist-get parsed :value))
+         (version (plist-get parsed :version))
+         (best (car matches))
+         (block (plist-get best :block))
+         (private (net-ip-private-p value version)))
+    (list :json :classification
+          :heading "Classification"
+          :items (append
+                  (if best
+                      (list '(:field "Class" :class)
+                            '(:field "Registry" :rfc)
+                            '(:field "Block" :block))
+                    (list '(:field "Class" :class)))
+                  (list '(:field "Private" :private :privateText)))
+          :class (if best
+                     (plist-get best :name)
+                   "Global unicast (no special-purpose block)")
+          :rfc (when best (plist-get best :rfc))
+          :block (when block
+                   (format "%s/%d"
+                           (net-ip-format (plist-get block :start) version)
+                           (plist-get block :prefix)))
+          :private (if private t :json-false)
+          :privateText (if private
+                           (if (= version 4) "yes (RFC 1918)" "yes (RFC 4193)")
+                         "no"))))
+
+(defun net-ip--report-special-section (matches version)
+  "Return the special-purpose block section of MATCHES of VERSION.
+Return nil when one block suffices, because the classification
+section already names it."
+  (when (> (length matches) 1)
+    (list :json :specialPurposeBlocks
+          :heading "All Special-Purpose Blocks"
+          :records
+          (mapcar (lambda (entry)
+                    (let ((cidr (format "%s/%d"
+                                        (net-ip-format
+                                         (plist-get (plist-get entry :block)
+                                                    :start)
+                                         version)
+                                        (plist-get (plist-get entry :block)
+                                                   :prefix))))
+                      (list :items (list (list :link
+                                               (plist-get entry :name)
+                                               'cidr cidr))
+                            :json (list :name (plist-get entry :name)
+                                        :cidr cidr))))
+                  matches))))
+
+(defun net-ip--related-record (label role kind value)
+  "Return one related address record.
+LABEL names the row, ROLE names it in the JSON, KIND names the
+address kind of VALUE."
+  (list :items (list (list :link label kind value))
+        :json (list :role role :kind (if (eq kind 'cidr) "cidr" "ip")
+                    :value value)))
+
+(defun net-ip--report-related-section (parsed)
+  "Return the related address section of PARSED."
+  (let* ((value (plist-get parsed :value))
+         (version (plist-get parsed :version))
+         (text (net-ip-canonical parsed))
+         (host-prefix (if (= version 4) 32 128))
+         (records
+          (list (net-ip--related-record
+                 "Host prefix" "hostPrefix" 'cidr
+                 (format "%s/%d" text host-prefix)))))
+    (when (and (= version 6)
+               (net-ip-in-block-p value 6 (net-ip--block "::ffff:0:0/96")))
+      (setq records
+            (append records
+                    (list (net-ip--related-record
+                           "Embedded IPv4" "embeddedIpv4" 'ip
+                           (net-ip--format-ipv4 (logand value #xffffffff)))))))
+    (when (and (= version 6)
+               (net-ip-in-block-p value 6 (net-ip--block "2002::/16")))
+      (setq records
+            (append records
+                    (list (net-ip--related-record
+                           "6to4 embedded IPv4" "sixToFourEmbeddedIpv4" 'ip
+                           (net-ip--format-ipv4
+                            (logand (ash value -80) #xffffffff)))))))
+    (when (and (= version 6)
+               (net-ip-in-block-p value 6 (net-ip--block "2001::/32")))
+      (setq records
+            (append records
+                    (list (net-ip--related-record
+                           "Teredo server IPv4" "teredoServerIpv4" 'ip
+                           (net-ip--format-ipv4 (logand (ash value -64)
+                                                        #xffffffff)))
+                          (net-ip--related-record
+                           "Teredo client IPv4" "teredoClientIpv4" 'ip
+                           (net-ip--format-ipv4
+                            (logand (lognot (logand value #xffffffff))
+                                    #xffffffff)))))))
+    (when (and (= version 4)
+               (not (net-ip-in-block-p value 4 (net-ip--block "224.0.0.0/4"))))
+      (setq records
+            (append records
+                    (list (net-ip--related-record
+                           "IPv4-mapped IPv6" "ipv4MappedIpv6" 'ip
+                           (net-ip--format-ipv6
+                            (logior (ash #xffff 32) value)))))))
+    (list :json :related
+          :heading "Related"
+          :records records)))
+
+(defun net-ip--report-reverse-section (parsed)
+  "Return the reverse DNS section of PARSED."
+  (list :json :reverseDns
+        :heading "Reverse DNS"
+        :items (list '(:field "Name" :name))
+        :name (net-ip-reverse-dns (plist-get parsed :value)
+                                  (plist-get parsed :version))))
+
+(defun net-ip--report-geo-section (parsed)
+  "Return the GeoIP section of PARSED, or nil without a database."
+  (let* ((version (plist-get parsed :version))
+         (file (if (= version 4)
+                   net-geo-database-file
+                 net-geo-database-file-v6)))
+    (when (net-data-available-p file)
+      (let ((country (net-geo-country (plist-get parsed :value) version)))
+        (list :json :geoip
+              :heading "GeoIP"
+              :items (list '(:field "Country" :country :countryText)
+                           '(:text "Database" :source))
+              :country country
+              :countryText (or country "no match")
+              :source (net-geo-description file version))))))
+
+(defun net-ip--report-asn-section (parsed)
+  "Return the origin AS section of PARSED, or nil without a database."
   (let* ((version (plist-get parsed :version))
          (value (plist-get parsed :value))
          (file (if (= version 4)
                    net-asn-ip-database-file
                  net-asn-ip-database-file-v6)))
     (when (net-data-available-p file)
-      (net-insert-heading "Autonomous System")
-      (let ((entry (net-asn-ip-entry value version)))
-        (if (null entry)
-            (net-insert-field "AS" "no match")
-          (let ((asn (plist-get entry :asn))
-                (start (plist-get entry :start))
-                (end (plist-get entry :end))
-                (country (plist-get entry :country)))
-            (if (zerop asn)
-                (net-insert-field "AS" "0 (not routed)")
-              (net-insert-link "AS" 'asn (format "AS%d" asn)))
-            (unless (zerop asn)
-              (net-insert-field "Country"
-                                (unless (equal country "None") country))
-              (net-insert-field "Organisation"
-                                (plist-get entry :description)))
-            (if-let* ((prefix (net-ip--range-prefix start end version)))
-                (net-insert-link "Prefix" 'cidr prefix)
-              (net-insert-field "Range"
-                                (format "%s - %s"
-                                        (net-ip-format start version)
-                                        (net-ip-format end version)))))))
-      (net-insert-text "Database" (net-asn-ip-description file version)))))
+      (let* ((entry (net-asn-ip-entry value version))
+             (asn (plist-get entry :asn))
+             (start (plist-get entry :start))
+             (end (plist-get entry :end))
+             (country (plist-get entry :country))
+             (prefix (and entry (net-ip--range-prefix start end version)))
+             (routed (and entry (/= asn 0)))
+             (items nil))
+        (cond
+         ((null entry)
+          (setq items (list '(:field "AS" :asn :asnText))))
+         ((zerop asn)
+          (setq items (list '(:field "AS" :asn :asnText))))
+         (t
+          (setq items (list (list :link "AS" 'asn :asn :asnText)
+                            (list :field "Country" :country)
+                            (list :field "Organisation" :organisation)
+                            (if prefix
+                                (list :link "Prefix" 'cidr :prefix)
+                              (list :field "Range" :range))))))
+        (list :json :originAs
+              :heading "Autonomous System"
+              :items (append items (list '(:text "Database" :source)))
+              :asn asn
+              :asnText (cond ((null entry) "no match")
+                             ((zerop asn) "0 (not routed)")
+                             (t (format "AS%d" asn)))
+              :country (and routed (unless (equal country "None") country))
+              :organisation (and routed (plist-get entry :description))
+              :prefix (and routed prefix)
+              :range (and routed
+                          (format "%s - %s"
+                                  (net-ip-format start version)
+                                  (net-ip-format end version)))
+              :source (net-asn-ip-description file version))))))
+
+(defun net-ip-report (address)
+  "Return the report of the IP ADDRESS.
+The report holds the fields that the buffer shows and the RDAP
+identity of the address.  `net--render-report' renders it, and
+`net-json-view' encodes it."
+  (let* ((parsed (net-ip-parse address))
+         (value (plist-get parsed :value))
+         (version (plist-get parsed :version))
+         (matches (net-ip-matching-blocks value version))
+         (best (car matches))
+         (text (net-ip-format value version)))
+    (list
+     :summary (format "IPv%d, %s" version
+                      (if best (plist-get best :name) "global unicast"))
+     :rdap-type "ip"
+     :rdap-key text
+     :rdap (list :objectClassName "ip network"
+                 :ipVersion (format "v%d" version)
+                 :startAddress text
+                 :endAddress text)
+     :sections
+     (delq nil
+           (list (net-ip--report-address-section parsed)
+                 (net-ip--report-classification-section parsed matches)
+                 (net-ip--report-special-section matches version)
+                 (net-ip--report-reverse-section parsed)
+                 (net-ip--report-related-section parsed)
+                 (net-ip--report-geo-section parsed)
+                 (net-ip--report-asn-section parsed))))))
 
 (defun net-ip--display ()
   "Render the IP address in the current buffer."
-  (let* ((parsed (net-ip-parse net--value))
-         (version (plist-get parsed :version))
-         (matches (net-ip-matching-blocks (plist-get parsed :value) version))
-         (best (car matches)))
-    (net-set-summary (format "IPv%d, %s"
-                             version
-                             (if best (plist-get best :name) "global unicast")))
-    (net-ip--insert-address-section parsed)
-    (net-ip--insert-classification-section parsed matches)
-    (net-ip--insert-reverse-section parsed)
-    (net-ip--insert-related-section parsed)
-    (net-ip--insert-geo-section parsed)
-    (net-ip--insert-asn-section parsed)
-    (setq-local net--rdap-type "ip"
-                net--rdap-key (net-ip-format (plist-get parsed :value)
-                                             version))))
+  (net--render-report (net-ip-report net--value)))
 
 ;;; Mode and entry points
 

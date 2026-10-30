@@ -142,64 +142,100 @@ vsock://CID:PORT with decimal or hexadecimal numbers."
              (= (string-to-number spec) port)))))
        (cdr cached)))))
 
-;;; Display
+;;; Report
 
-(defun net-vsock--insert-address-section (parsed)
-  "Insert the fields of PARSED."
-  (net-insert-heading "VSOCK")
-  (let ((cid (plist-get parsed :cid))
-        (port (plist-get parsed :port)))
-    (net-insert-field "Address" (net-vsock-canonical parsed))
-    (net-insert-field "CID" cid)
-    (net-insert-field "CID (hex)" (format "0x%x" cid))
-    (net-insert-field "CID meaning" (alist-get cid net-vsock--cid-names))
-    (net-insert-field "Port" port)
-    (net-insert-field "Port (hex)" (format "0x%x" port))
-    (net-insert-field "Port meaning"
-                      (if (= port 4294967295)
-                          "VMADDR_PORT_ANY"
-                        "not VMADDR_PORT_ANY"))))
+(defun net-vsock--report-address-section (parsed)
+  "Return the address section of PARSED."
+  (let* ((cid (plist-get parsed :cid))
+         (port (plist-get parsed :port))
+         (any (= port 4294967295)))
+    (list :json :address
+          :heading "VSOCK"
+          :items (list '(:field "Address" :address)
+                       '(:field "CID" :cid)
+                       '(:field "CID (hex)" :cidHex)
+                       '(:field "CID meaning" :cidMeaning)
+                       '(:field "Port" :port)
+                       '(:field "Port (hex)" :portHex)
+                       '(:field "Port meaning" :portAny :portMeaning))
+          :address (net-vsock-canonical parsed)
+          :cid cid
+          :cidHex (format "0x%x" cid)
+          :cidMeaning (alist-get cid net-vsock--cid-names)
+          :port port
+          :portHex (format "0x%x" port)
+          :portAny (if any t :json-false)
+          :portMeaning (if any "VMADDR_PORT_ANY" "not VMADDR_PORT_ANY"))))
 
-(defun net-vsock--insert-services-section (parsed)
-  "Insert the IANA service rows that share the port of PARSED."
+(defun net-vsock--report-services-section (parsed)
+  "Return the IANA service section of PARSED, or nil."
   (when (net-data-available-p net-vsock-service-file)
     (let ((rows (net-vsock--services (plist-get parsed :port))))
-      (net-insert-heading "IANA Service Names")
       (if (null rows)
-          (net-insert-field "Service" "none with this number")
-        (dolist (row rows)
-          (net-insert-field (format "%s/%s"
-                                    (or (plist-get row :name) "unnamed")
-                                    (or (plist-get row :transport) "?"))
-                            (plist-get row :description))))
-      (net-insert-text "Note"
-                       "AF_VSOCK ports are not assigned by IANA; this is informational."))))
+          (list :json :serviceNames
+                :heading "IANA Service Names"
+                :items (list '(:field "Service" :service :serviceText)
+                             '(:text "Note" :note))
+                :service nil
+                :serviceText "none with this number"
+                :note (concat "AF_VSOCK ports are not assigned by IANA; "
+                              "this is informational."))
+        (list :json :serviceNames
+              :heading "IANA Service Names"
+              :items (list '(:text "Note" :note))
+              :note (concat "AF_VSOCK ports are not assigned by IANA; "
+                            "this is informational.")
+              :records
+              (mapcar (lambda (row)
+                        (let ((name (or (plist-get row :name) "unnamed"))
+                              (transport (or (plist-get row :transport) "?")))
+                          (list :items
+                                (list (list :field
+                                            (format "%s/%s" name transport)
+                                            (or (plist-get row :description)
+                                                "")))
+                                :json (list :name (plist-get row :name)
+                                            :transport
+                                            (plist-get row :transport)
+                                            :description
+                                            (plist-get row :description)))))
+                      rows))))))
 
-(defun net-vsock--insert-structure-section ()
-  "Insert the sockaddr_vm byte layout."
-  (net-insert-heading "sockaddr_vm")
-  (net-insert-text "Layout" net-vsock--structure))
+(defun net-vsock--report-structure-section ()
+  "Return the sockaddr_vm layout section."
+  (list :json :structure
+        :heading "sockaddr_vm"
+        :items (list '(:text "Layout" :layout))
+        :layout net-vsock--structure))
 
-(defun net-vsock--display ()
-  "Render the vsock address in the current buffer."
-  (let* ((parsed (net-vsock-parse net--value))
+(defun net-vsock-report (address)
+  "Return the report of the AF_VSOCK ADDRESS.
+The report holds the fields that the buffer shows.  A vsock address
+has no RDAP identity, so the report carries none."
+  (let* ((parsed (net-vsock-parse address))
          (cid (plist-get parsed :cid))
          (port (plist-get parsed :port))
          (service (and (net-data-available-p net-vsock-service-file)
                        (car (net-vsock--services port))))
          (name (and service (plist-get service :name))))
-    (net-set-summary
-     (format "%s, %s"
-             (or (alist-get cid net-vsock--cid-names)
-                 (format "CID %d" cid))
-             (if (and name (not (string-empty-p name)))
-                 name
-               (if (= port 4294967295)
-                   "VMADDR_PORT_ANY"
-                   "no IANA service name"))))
-    (net-vsock--insert-address-section parsed)
-    (net-vsock--insert-services-section parsed)
-    (net-vsock--insert-structure-section)))
+    (list
+     :summary (format "%s, %s"
+                      (or (alist-get cid net-vsock--cid-names)
+                          (format "CID %d" cid))
+                      (if (and name (not (string-empty-p name)))
+                          name
+                        (if (= port 4294967295)
+                            "VMADDR_PORT_ANY"
+                          "no IANA service name")))
+     :sections
+     (delq nil
+           (list (net-vsock--report-address-section parsed)
+                 (net-vsock--report-services-section parsed)
+                 (net-vsock--report-structure-section))))))
+
+(defun net-vsock--display ()
+  "Render the vsock address in the current buffer."
+  (net--render-report (net-vsock-report net--value)))
 
 ;;; Mode and entry points
 

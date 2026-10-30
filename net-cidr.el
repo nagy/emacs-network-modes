@@ -119,123 +119,183 @@ The narrowest entry comes first."
                           (plist-get parsed :version)
                           (plist-get parsed :last)))
 
-;;; Display
+;;; Report
 
-(defun net-cidr--insert-address-section (parsed)
-  "Insert the address fields of PARSED."
-  (net-insert-heading "Prefix")
-  (let* ((version (plist-get parsed :version))
-         (prefix (plist-get parsed :prefix))
+(defun net-cidr-report (prefix)
+  "Return the report of the CIDR PREFIX.
+The report holds the fields that the buffer shows and the RDAP
+identity of the prefix.  `net--render-report' renders it, and
+`net-json-view' encodes it."
+  (let* ((parsed (net-cidr-parse prefix))
+         (version (plist-get parsed :version))
+         (length (plist-get parsed :prefix))
          (bits (plist-get parsed :bits))
-         (host-bits (- bits prefix))
          (network (plist-get parsed :network))
          (last (plist-get parsed :last))
+         (host-bits (- bits length))
          (total (ash 1 host-bits))
-         (mask (ash (1- (ash 1 prefix)) host-bits)))
-    (net-insert-field "Prefix" (net-cidr-canonical parsed))
-    (net-insert-field "Version" (format "IPv%d" version))
-    (net-insert-link "Network address" 'ip (net-ip-format network version))
-    (net-insert-link "Last address" 'ip (net-ip-format last version))
-    (net-insert-field "Netmask"
-                      (if (= version 4)
-                          (net-ip-format mask 4)
-                        (net-ip--format-ipv6-full mask)))
-    (when (= version 4)
-      (net-insert-field "Wildcard"
-                        (net-ip-format (logand (lognot mask) #xffffffff) 4)))
-    (net-insert-field "Host bits" host-bits)
-    (net-insert-field "Total addresses" total)
-    (net-insert-field "Usable hosts"
-                      (if (= version 4)
-                          (cond ((<= prefix 30) (- total 2))
-                                ((= prefix 31) 2)
-                                (t 1))
-                        total))
-    (when (and (= version 4) (<= prefix 30))
-      (net-insert-field "Broadcast address" (net-ip-format last 4)))))
-
-(defun net-cidr--insert-classification-section (parsed)
-  "Insert the special-purpose classification of PARSED."
-  (let* ((version (plist-get parsed :version))
+         (mask (ash (1- (ash 1 length)) host-bits))
          (matches (net-cidr-matching-entries parsed))
-         (csv (net-cidr-registry-entries version)))
-    (net-insert-heading "Classification")
-    (if (null matches)
-        (net-insert-field "Registry" "Global unicast (no special-purpose block)")
-      (let ((best (car matches)))
-        (net-insert-field "Registry" (plist-get best :name))
-        (net-insert-field "Reference" (plist-get best :rfc))
-        (when (plist-get best :source)
-          (net-insert-field "Valid source" (plist-get best :source))
-          (net-insert-field "Valid destination" (plist-get best :destination))
-          (net-insert-field "Forwardable" (plist-get best :forwardable))
-          (net-insert-field "Globally reachable" (plist-get best :global)))))
-    (net-insert-field "Private"
-                      (if (net-ip-private-range-p
-                           (plist-get parsed :network)
-                           (plist-get parsed :last)
-                           version)
-                          (if (= version 4) "yes (RFC 1918)" "yes (RFC 4193)")
-                        "no"))
-    (net-insert-text "Data source"
-                     (if csv "IANA special-purpose registry CSV"
-                       "built-in table (set `net-ip-registry-file' for IANA data)"))
-    (when (> (length matches) 1)
-      (net-insert-heading "Containing Blocks")
-      (dolist (entry matches)
-        (net-insert-link (or (plist-get entry :name)
-                             (plist-get entry :cidr))
-                         'cidr
-                         (plist-get entry :cidr))))))
-
-(defun net-cidr--insert-related-section (parsed)
-  "Insert the related prefixes of PARSED."
-  (let* ((version (plist-get parsed :version))
-         (prefix (plist-get parsed :prefix))
-         (bits (plist-get parsed :bits))
-         (network (plist-get parsed :network))
-         (zone (net-cidr-reverse-zone network prefix version))
-         (items nil))
-    (when (> prefix 0)
-      (push (cons (format "Parent /%d" (1- prefix))
-                  (cons 'cidr
-                        (format "%s/%d" (net-ip-format network version)
-                                (1- prefix))))
-            items))
-    (when (< prefix bits)
-      (let ((child-size (ash 1 (1- (- bits prefix)))))
-        (push (cons (format "Lower /%d" (1+ prefix))
-                    (cons 'cidr
-                          (format "%s/%d" (net-ip-format network version)
-                                  (1+ prefix))))
-              items)
-        (push (cons (format "Upper /%d" (1+ prefix))
-                    (cons 'cidr
-                          (format "%s/%d"
-                                  (net-ip-format (+ network child-size) version)
-                                  (1+ prefix))))
-              items)))
-    (when items
-      (net-insert-heading "Related")
-      (dolist (item (nreverse items))
-        (net-insert-link (car item) (cadr item) (cddr item))))
-    (net-insert-heading "Reverse DNS")
-    (net-insert-field "Zone" (or zone "not aligned to a label boundary"))))
+         (best (car matches))
+         (csv (net-cidr-registry-entries version))
+         (private (net-ip-private-range-p network last version))
+         (network-text (net-ip-format network version))
+         (last-text (net-ip-format last version))
+         (zone (net-cidr-reverse-zone network length version))
+         (broadcast (and (= version 4) (<= length 30)))
+         (related nil))
+    (when (> length 0)
+      (push (list :items
+                  (list (list :link (format "Parent /%d" (1- length))
+                              'cidr
+                              (format "%s/%d" network-text (1- length))))
+                  :json (list :role "parent"
+                              :prefix (format "%s/%d" network-text
+                                              (1- length))))
+            related))
+    (when (< length bits)
+      (let ((child-size (ash 1 (1- (- bits length)))))
+        (push (list :items
+                    (list (list :link (format "Lower /%d" (1+ length))
+                                'cidr
+                                (format "%s/%d" network-text (1+ length))))
+                    :json (list :role "lower"
+                                :prefix (format "%s/%d" network-text
+                                                (1+ length))))
+              related)
+        (push (list :items
+                    (list (list :link (format "Upper /%d" (1+ length))
+                                'cidr
+                                (format "%s/%d"
+                                        (net-ip-format (+ network child-size)
+                                                       version)
+                                        (1+ length))))
+                    :json (list :role "upper"
+                                :prefix (format "%s/%d"
+                                                (net-ip-format
+                                                 (+ network child-size)
+                                                 version)
+                                                (1+ length))))
+              related)))
+    (list
+     :summary (format "IPv%d, %s" version
+                      (if best (plist-get best :name) "global unicast"))
+     :rdap-type "ip"
+     :rdap-key network-text
+     :rdap (list :objectClassName "ip network"
+                 :ipVersion (format "v%d" version)
+                 :startAddress network-text
+                 :endAddress last-text)
+     :sections
+     (delq nil
+           (list
+            (list :json :prefix :heading "Prefix"
+                  :items (delq nil
+                               (list '(:field "Prefix" :cidr)
+                                     '(:field "Version" :version)
+                                     '(:link "Network address" ip
+                                             :networkAddress)
+                                     '(:link "Last address" ip :lastAddress)
+                                     '(:field "Netmask" :netmask)
+                                     (when (= version 4)
+                                       '(:field "Wildcard" :wildcard))
+                                     '(:field "Host bits" :hostBits)
+                                     '(:field "Total addresses"
+                                              :totalAddresses)
+                                     '(:field "Usable hosts" :usableHosts)
+                                     (when broadcast
+                                       '(:field "Broadcast address"
+                                                :broadcastAddress))))
+                  :cidr (net-cidr-canonical parsed)
+                  :version (format "IPv%d" version)
+                  :networkAddress network-text
+                  :lastAddress last-text
+                  :netmask (if (= version 4)
+                               (net-ip-format mask 4)
+                             (net-ip--format-ipv6-full mask))
+                  :wildcard (when (= version 4)
+                              (net-ip-format
+                               (logand (lognot mask) #xffffffff) 4))
+                  :hostBits host-bits
+                  :totalAddresses total
+                  :usableHosts (if (= version 4)
+                                   (cond ((<= length 30) (- total 2))
+                                         ((= length 31) 2)
+                                         (t 1))
+                                 total)
+                  :broadcastAddress (when broadcast last-text))
+            (list :json :classification :heading "Classification"
+                  :items
+                  (append
+                   (if (null matches)
+                       (list '(:field "Registry" :name))
+                     (append
+                      (list '(:field "Registry" :name)
+                            '(:field "Reference" :rfc))
+                      (when (plist-get best :source)
+                        (list '(:field "Valid source" :validSource
+                                       :validSourceText)
+                              '(:field "Valid destination" :validDestination
+                                       :validDestinationText)
+                              '(:field "Forwardable" :forwardable
+                                       :forwardableText)
+                              '(:field "Globally reachable" :globallyReachable
+                                       :globallyReachableText)))))
+                   (list '(:field "Private" :private :privateText)
+                         '(:text "Data source" :source)))
+                  :name (if best
+                            (plist-get best :name)
+                          "Global unicast (no special-purpose block)")
+                  :rfc (when best (plist-get best :rfc))
+                  :validSource (when best (net--flag (plist-get best :source)))
+                  :validSourceText (when best (plist-get best :source))
+                  :validDestination (when best
+                                      (net--flag
+                                       (plist-get best :destination)))
+                  :validDestinationText (when best
+                                          (plist-get best :destination))
+                  :forwardable (when best
+                                 (net--flag (plist-get best :forwardable)))
+                  :forwardableText (when best (plist-get best :forwardable))
+                  :globallyReachable (when best
+                                       (net--flag (plist-get best :global)))
+                  :globallyReachableText (when best (plist-get best :global))
+                  :private (if private t :json-false)
+                  :privateText (if private
+                                   (if (= version 4)
+                                       "yes (RFC 1918)"
+                                     "yes (RFC 4193)")
+                                 "no")
+                  :source (if csv
+                              "IANA special-purpose registry CSV"
+                            (concat "built-in table (set "
+                                    "`net-ip-registry-file' for IANA data)")))
+            (when (> (length matches) 1)
+              (list :json :containingBlocks :heading "Containing Blocks"
+                    :records
+                    (mapcar (lambda (entry)
+                              (list :items
+                                    (list (list :link
+                                                (or (plist-get entry :name)
+                                                    (plist-get entry :cidr))
+                                                'cidr
+                                                (plist-get entry :cidr)))
+                                    :json (list :name
+                                                (plist-get entry :name)
+                                                :cidr
+                                                (plist-get entry :cidr))))
+                            matches)))
+            (when related
+              (list :json :related :heading "Related"
+                    :records (nreverse related)))
+            (list :json :reverseDns :heading "Reverse DNS"
+                  :items (list '(:field "Zone" :zone :zoneText))
+                  :zone zone
+                  :zoneText (or zone "not aligned to a label boundary")))))))
 
 (defun net-cidr--display ()
   "Render the CIDR prefix in the current buffer."
-  (let* ((parsed (net-cidr-parse net--value))
-         (matches (net-cidr-matching-entries parsed))
-         (best (car matches)))
-    (net-set-summary (format "IPv%d, %s"
-                             (plist-get parsed :version)
-                             (if best (plist-get best :name) "global unicast")))
-    (net-cidr--insert-address-section parsed)
-    (net-cidr--insert-classification-section parsed)
-    (net-cidr--insert-related-section parsed)
-    (setq-local net--rdap-type "ip"
-                net--rdap-key (net-ip-format (plist-get parsed :network)
-                                             (plist-get parsed :version)))))
+  (net--render-report (net-cidr-report net--value)))
 
 ;;; Mode and entry points
 

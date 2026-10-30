@@ -261,98 +261,136 @@ TABLE maps \"BITS:PREFIX\" to a plist with :mask, :short and :long."
                when entry
                return entry))))
 
-;;; Display
+;;; Report
 
-(defun net-mac--insert-address-section (parsed)
-  "Insert the notation fields of PARSED."
-  (net-insert-heading "Address")
-  (let* ((octets (plist-get parsed :octets))
-         (hex (net-mac-hex parsed))
-         (bits (plist-get parsed :bits)))
-    (net-insert-field "Normalized" (net-mac-canonical parsed))
-    (net-insert-field "Uppercase" (net-mac--prefix-string hex (/ bits 4)))
-    (net-insert-field "Hyphenated"
-                      (mapconcat #'downcase
+(defun net-mac--report-address-section (parsed)
+  "Return the notation section of PARSED."
+  (let* ((hex (net-mac-hex parsed))
+         (bits (plist-get parsed :bits))
+         (value 0))
+    (dolist (octet (plist-get parsed :octets) value)
+      (setq value (+ (* value 256) octet)))
+    (list :json :address
+          :heading "Address"
+          :items (delq nil
+                       (list '(:field "Normalized" :canonical)
+                             '(:field "Uppercase" :uppercase)
+                             '(:field "Hyphenated" :hyphenated)
+                             (when (= bits 48)
+                               '(:field "Cisco" :cisco))
+                             '(:field "Bare hex" :hex)
+                             '(:field "Integer" :integer)
+                             '(:field "Bits" :bits)))
+          :canonical (net-mac-canonical parsed)
+          :uppercase (net-mac--prefix-string hex (/ bits 4))
+          :hyphenated (mapconcat #'downcase
                                  (split-string (net-mac-canonical parsed) ":")
-                                 "-"))
-    (when (= bits 48)
-      (net-insert-field "Cisco"
-                        (format "%s.%s.%s"
-                                (substring hex 0 4)
-                                (substring hex 4 8)
-                                (substring hex 8 12))))
-    (net-insert-field "Bare hex" hex)
-    (net-insert-field "Integer"
-                      (let ((value 0))
-                        (dolist (octet octets value)
-                          (setq value (+ (* value 256) octet)))))
-    (net-insert-field "Bits" bits)))
+                                 "-")
+          :cisco (when (= bits 48)
+                   (format "%s.%s.%s"
+                           (substring hex 0 4)
+                           (substring hex 4 8)
+                           (substring hex 8 12)))
+          :hex hex
+          :integer value
+          :bits bits)))
 
-(defun net-mac--insert-flags-section (parsed)
-  "Insert the bit fields of PARSED."
-  (net-insert-heading "Flags")
-  (let* ((octets (plist-get parsed :octets))
-         (first (car octets))
+(defun net-mac--report-flags-section (parsed)
+  "Return the bit field section of PARSED."
+  (let* ((first (car (plist-get parsed :octets)))
          (multicast (= 1 (logand first #x01)))
-         (local (= 1 (logand (ash first -1) #x01))))
-    (net-insert-field "Address type" (if multicast "multicast" "unicast"))
-    (net-insert-field "Administration"
-                      (if local
-                          "locally administered"
-                        "universally administered (OUI)"))
-    (net-insert-field "I/G bit" (if multicast 1 0))
-    (net-insert-field "U/L bit" (if local 1 0))
-    (let ((canonical (net-mac-canonical parsed))
-          (special nil))
-      (dolist (entry net-mac--special)
-        (let ((prefix (car entry)))
-          (when (and (not special)
-                     (or (string= canonical prefix)
-                         (string-prefix-p (concat prefix ":") canonical)))
-            (setq special (cdr entry)))))
-      (when special
-        (net-insert-field "Special" special)))))
+         (local (= 1 (logand (ash first -1) #x01)))
+         (canonical (net-mac-canonical parsed))
+         (special nil))
+    (dolist (entry net-mac--special)
+      (let ((prefix (car entry)))
+        (when (and (not special)
+                   (or (string= canonical prefix)
+                       (string-prefix-p (concat prefix ":") canonical)))
+          (setq special (cdr entry)))))
+    (list :json :flags
+          :heading "Flags"
+          :items (delq nil
+                       (list '(:field "Address type" :multicast :addressType)
+                             '(:field "Administration" :local :administration)
+                             '(:field "I/G bit" :intraGroupBit)
+                             '(:field "U/L bit" :universalLocalBit)
+                             (when special '(:field "Special" :special))))
+          :multicast (if multicast t :json-false)
+          :addressType (if multicast "multicast" "unicast")
+          :local (if local t :json-false)
+          :administration (if local
+                              "locally administered"
+                            "universally administered (OUI)")
+          :intraGroupBit (if multicast 1 0)
+          :universalLocalBit (if local 1 0)
+          :special special)))
 
-(defun net-mac--insert-vendor-section (parsed)
-  "Insert the assignment fields of PARSED."
-  (net-insert-heading "Assignment")
+(defun net-mac--report-assignment-section (parsed)
+  "Return the assignment section of PARSED."
   (if (not (net-mac--registry-available-p))
-      (net-insert-text "Database"
-                       "unset (customize `net-mac-registry-directory')")
+      (list :json :assignment
+            :heading "Assignment"
+            :items (list '(:text "Database" :database))
+            :database "unset (customize `net-mac-registry-directory')")
     (let ((vendor (net-mac-ieee-entry parsed)))
       (if (null vendor)
-          (net-insert-field "Prefix" "not assigned")
+          (list :json :assignment
+                :heading "Assignment"
+                :items (list '(:field "Prefix" :prefix :prefixText))
+                :prefix nil
+                :prefixText "not assigned")
         (let* ((prefix (car vendor))
                (entry (cdr vendor))
                (registry (plist-get entry :registry))
-               (address (plist-get entry :address)))
-          (net-insert-field "Prefix"
-                            (format "%s/%d"
-                                    (net-mac--prefix-string prefix
-                                                             (length prefix))
-                                    (* 4 (length prefix))))
-          (net-insert-field "Vendor" (plist-get entry :name))
-          (net-insert-field "Registry" registry)
-          (net-insert-field "Block size"
-                            (pcase registry
-                              ("MA-L" "2^24 addresses")
-                              ("MA-M" "2^20 addresses")
-                              ("MA-S" "2^12 addresses")
-                              ("IAB" "2^12 addresses")
-                              ("CID" "2^24 addresses (company ID)")
-                              (_ "unknown")))
-          (when (and address (not (string-empty-p address)))
-            (net-insert-field "Organization address" address))
-          (net-insert-text "Source" (plist-get entry :file))))))
-  (when-let* ((entry (net-mac-manuf-entry parsed)))
-    (net-insert-heading "Wireshark manuf")
-    (net-insert-field "Short name" (plist-get entry :short))
-    (net-insert-field "Long name" (plist-get entry :long))
-    (net-insert-field "Mask bits" (plist-get entry :mask))
-    (net-insert-text "Source" (file-name-nondirectory net-mac-manuf-file))))
+               (address (plist-get entry :address))
+               (prefix-text (format "%s/%d"
+                                    (net-mac--prefix-string
+                                     prefix (length prefix))
+                                    (* 4 (length prefix)))))
+          (list :json :assignment
+                :heading "Assignment"
+                :items (delq nil
+                             (list '(:field "Prefix" :prefix)
+                                   '(:field "Vendor" :vendor)
+                                   '(:field "Registry" :registry)
+                                   '(:field "Block size" :blockSize)
+                                   (when (and address
+                                              (not (string-empty-p address)))
+                                     '(:field "Organization address"
+                                              :organizationAddress))
+                                   '(:text "Source" :source)))
+                :prefix prefix-text
+                :vendor (plist-get entry :name)
+                :registry registry
+                :blockSize (pcase registry
+                             ("MA-L" "2^24 addresses")
+                             ("MA-M" "2^20 addresses")
+                             ("MA-S" "2^12 addresses")
+                             ("IAB" "2^12 addresses")
+                             ("CID" "2^24 addresses (company ID)")
+                             (_ "unknown"))
+                :organizationAddress (and address
+                                          (not (string-empty-p address))
+                                          address)
+                :source (plist-get entry :file)))))))
 
-(defun net-mac--insert-eui64-section (parsed)
-  "Insert the IPv6 interface identifier of PARSED."
+(defun net-mac--report-manuf-section (parsed)
+  "Return the Wireshark manuf section of PARSED, or nil."
+  (when-let* ((entry (net-mac-manuf-entry parsed)))
+    (list :json :manuf
+          :heading "Wireshark manuf"
+          :items (list '(:field "Short name" :shortName)
+                       '(:field "Long name" :longName)
+                       '(:field "Mask bits" :maskBits)
+                       '(:text "Source" :source))
+          :shortName (plist-get entry :short)
+          :longName (plist-get entry :long)
+          :maskBits (plist-get entry :mask)
+          :source (file-name-nondirectory net-mac-manuf-file))))
+
+(defun net-mac--report-eui64-section (parsed)
+  "Return the IPv6 interface identifier section of PARSED, or nil."
   (when (= (plist-get parsed :bits) 48)
     (let* ((octets (plist-get parsed :octets))
            (first (logxor (nth 0 octets) #x02))
@@ -360,30 +398,41 @@ TABLE maps \"BITS:PREFIX\" to a plist with :mask, :short and :long."
                              #xff #xfe
                              (nth 3 octets) (nth 4 octets) (nth 5 octets)))
            (value (logior (ash #xfe80 112)
-                          (let ((result 0))
-                            (dolist (octet identifier result)
-                              (setq result (logior (ash result 8) octet)))))))
-      (net-insert-heading "IPv6")
-      (net-insert-field "Modified EUI-64"
-                        (mapconcat (lambda (octet) (format "%02x" octet))
-                                   identifier ":"))
-      (net-insert-link "Link-local address" 'ip (net-ip-format value 6)))))
+                          (cl-reduce (lambda (result octet)
+                                       (logior (ash result 8) octet))
+                                     identifier :initial-value 0)))
+           (eui64 (mapconcat (lambda (octet) (format "%02x" octet))
+                             identifier ":")))
+      (list :json :ipv6
+            :heading "IPv6"
+            :items (list '(:field "Modified EUI-64" :modifiedEui64)
+                         '(:link "Link-local address" ip :linkLocal))
+            :modifiedEui64 eui64
+            :linkLocal (net-ip-format value 6)))))
+
+(defun net-mac-report (address)
+  "Return the report of the MAC ADDRESS.
+The report holds the fields that the buffer shows.  A MAC address has
+no RDAP identity, so the report carries none."
+  (let* ((parsed (net-mac-parse address))
+         (first (car (plist-get parsed :octets))))
+    (list
+     :summary (format "%s, %s"
+                      (if (= 1 (logand first #x01)) "multicast" "unicast")
+                      (if (= 1 (logand (ash first -1) #x01))
+                          "locally administered"
+                        "universally administered (OUI)"))
+     :sections
+     (delq nil
+           (list (net-mac--report-address-section parsed)
+                 (net-mac--report-flags-section parsed)
+                 (net-mac--report-assignment-section parsed)
+                 (net-mac--report-manuf-section parsed)
+                 (net-mac--report-eui64-section parsed))))))
 
 (defun net-mac--display ()
   "Render the MAC address in the current buffer."
-  (let* ((parsed (net-mac-parse net--value))
-         (octets (plist-get parsed :octets))
-         (first (car octets)))
-    (net-set-summary
-     (format "%s, %s"
-             (if (= 1 (logand first #x01)) "multicast" "unicast")
-             (if (= 1 (logand (ash first -1) #x01))
-                 "locally administered"
-                 "universally administered (OUI)")))
-    (net-mac--insert-address-section parsed)
-    (net-mac--insert-flags-section parsed)
-    (net-mac--insert-vendor-section parsed)
-    (net-mac--insert-eui64-section parsed)))
+  (net--render-report (net-mac-report net--value)))
 
 ;;; Mode and entry points
 

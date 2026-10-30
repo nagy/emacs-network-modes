@@ -35,10 +35,10 @@
 ;;   (net-evil-mode 1)
 ;;
 ;; Evil state maps take precedence over a major mode map, so RET, q, w,
-;; b and i would otherwise run an evil command instead of the inspect
-;; command.  The bindings below put those commands back.  A read-only
-;; buffer has nothing to insert, paste or change, so the inspect
-;; commands win on those keys.
+;; b, J and i would otherwise run an evil command instead of the
+;; inspect command.  The bindings below put those commands back.  A
+;; read-only buffer has nothing to insert, paste or change, so the
+;; inspect commands win on those keys.
 
 ;;; Code:
 
@@ -51,6 +51,7 @@
     ("gr" . revert-buffer)
     ("w" . net-copy-value)
     ("b" . net-rdap)
+    ("J" . net-json-view)
     ("i" . net-inspect))
   "Keys that `net-evil-mode' binds in normal state.
 Each entry is a key description and the command it runs.  The
