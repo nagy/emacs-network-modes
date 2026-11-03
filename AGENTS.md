@@ -426,11 +426,12 @@ suffix, which package-build and the lint gates exclude.
   database readers have side effects.
 - Side effect free helpers carry `(declare (pure t) (side-effect-free t))`:
   the address formatters, the prefix and block arithmetic, the Punycode
-  encoder, `net--split-csv-line` and `net-asn-classification`.  A parser
-  that runs a regexp keeps no declaration, because `string-match`,
-  `split-string` and `string-trim` clobber the match data and
-  `case-fold-search` changes the result.  A reader must never carry one,
-  because it fills a cache.
+  encoder, the JSON report builders, the packed row readers,
+  `net--split-csv-line`, `net--csv-record`, `net-domain--psl-match` and
+  `net-asn-classification`.  A parser that runs a regexp keeps no
+  declaration, because `string-match`, `split-string` and `string-trim`
+  clobber the match data and `case-fold-search` changes the result.  A
+  reader must never carry one, because it fills a cache.
 - `defcustom` names carry the `net-` prefix.  Public functions are
   `net-KIND-*`; internal helpers use `net--`.
 - The package name equals the entry library: `pname =

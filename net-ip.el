@@ -465,6 +465,7 @@ multicast blocks stay classified."
 
 (defun net-ip--binary-string (value)
   "Return the dotted binary form of the IPv4 VALUE."
+  (declare (pure t) (side-effect-free t))
   (mapconcat (lambda (octet)
                (let ((bits nil))
                  (dotimes (index 8)
@@ -572,6 +573,7 @@ section already names it."
   "Return one related address record.
 LABEL names the row, ROLE names it in the JSON, KIND names the
 address kind of VALUE."
+  (declare (pure t) (side-effect-free t))
   (list :items (list (list :link label kind value))
         :json (list :role role :kind (if (eq kind 'cidr) "cidr" "ip")
                     :value value)))

@@ -138,6 +138,7 @@ Return a plist with :octets, :bits and :hex, or nil."
 
 (defun net-mac-canonical (parsed)
   "Return the canonical lowercase string of the parsed address PARSED."
+  (declare (pure t) (side-effect-free t))
   (downcase (net-mac--prefix-string (plist-get parsed :hex)
                                     (length (plist-get parsed :hex)))))
 

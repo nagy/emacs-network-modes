@@ -167,6 +167,7 @@ Return a plist with :labels, :text, :trailing-dot and :unicode, or nil."
 
 (defun net-domain-ascii (parsed)
   "Return the ASCII (Punycode) form of the parsed domain PARSED."
+  (declare (pure t) (side-effect-free t))
   (mapconcat #'net-domain-punycode-label
              (plist-get parsed :labels)
              "."))
@@ -175,6 +176,7 @@ Return a plist with :labels, :text, :trailing-dot and :unicode, or nil."
   "Return the canonical lowercase form of the parsed domain PARSED.
 Internationalized labels stay in their Unicode form; the ASCII form
 is a separate field."
+  (declare (pure t) (side-effect-free t))
   (downcase (plist-get parsed :text)))
 
 ;;; Public Suffix List
@@ -241,6 +243,7 @@ is the section symbol `icann' or `private'."
   "Find the public suffix of LABELS in the PSL TABLES.
 LABELS is a list with the rightmost label first.  Return
 \(SUFFIX-LENGTH . SECTION) or nil when no rule matches."
+  (declare (pure t) (side-effect-free t))
   (let* ((count (length labels))
          (icann (plist-get tables :icann))
          (private (plist-get tables :private))

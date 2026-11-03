@@ -447,6 +447,7 @@ as strings, as RFC 7493 recommends.")
   "Return the value of REFERENCE inside the plist SOURCE.
 REFERENCE is a keyword that names a key of SOURCE, or a literal
 value, which comes back unchanged."
+  (declare (pure t) (side-effect-free t))
   (if (keywordp reference)
       (plist-get source reference)
     reference))
@@ -524,6 +525,7 @@ REPORT holds `:summary', `:sections' and, when the value has one, the
 
 (defun net--json-name (key)
   "Return the JSON member name of KEY."
+  (declare (pure t) (side-effect-free t))
   (if (keywordp key)
       (substring (symbol-name key) 1)
     (format "%s" key)))
@@ -542,6 +544,7 @@ empty cell.  Return t, `:json-false' or nil respectively."
 A plist becomes an object, any other list becomes an array, a hash
 table and a vector pass through, and an integer beyond
 `net--json-safe-integer' becomes a string."
+  (declare (pure t) (side-effect-free t))
   (cond
    ((integerp value)
     (if (<= (abs value) net--json-safe-integer)
@@ -563,6 +566,7 @@ table and a vector pass through, and an integer beyond
   "Return the JSON members of SECTION as an alist.
 The item keys name the members, so a display label never reaches the
 JSON.  `:json-extra' adds members that the buffer does not show."
+  (declare (pure t) (side-effect-free t))
   (let (result)
     (dolist (item (plist-get section :items))
       (let ((key (pcase (car item)
@@ -584,6 +588,7 @@ JSON.  `:json-extra' adds members that the buffer does not show."
 
 (defun net--report-sections (report)
   "Return the JSON members of the sections of REPORT as an alist."
+  (declare (pure t) (side-effect-free t))
   (let (result)
     (dolist (section (plist-get report :sections))
       (push (cons (net--json-name (plist-get section :json))
@@ -599,6 +604,7 @@ JSON.  `:json-extra' adds members that the buffer does not show."
   "Return the JSON view of REPORT as an alist.
 KIND and VALUE name the inspected value.  ANSWER is the parsed RDAP
 response, or nil."
+  (declare (pure t) (side-effect-free t))
   (let ((result (list (cons "schema" net--json-schema)
                       (cons "kind" (symbol-name kind))
                       (cons "value" value))))
@@ -763,6 +769,7 @@ when FILE is not readable."
 
 (defun net--csv-record (record)
   "Return RECORD in file order, or nil when every field is empty."
+  (declare (pure t) (side-effect-free t))
   (let ((fields (nreverse record)))
     (unless (seq-every-p #'string-empty-p fields)
       fields)))
@@ -899,16 +906,19 @@ derivation cannot be read as the wrong table."
 
 (defun net--binary-row-offset (table index)
   "Return the byte offset of TABLE row INDEX."
+  (declare (pure t) (side-effect-free t))
   (+ net--binary-header-size (* index (plist-get table :row-size))))
 
 (defun net--binary-row (table index)
   "Return the unpacked TABLE row INDEX."
+  (declare (pure t) (side-effect-free t))
   (bindat-unpack (plist-get table :row-type)
                  (plist-get table :rows)
                  (net--binary-row-offset table index)))
 
 (defun net--binary-start (table index)
   "Return the first address of TABLE row INDEX."
+  (declare (pure t) (side-effect-free t))
   (bindat-get-field
    (bindat-unpack (plist-get table :edge-type)
                   (plist-get table :rows)
@@ -917,6 +927,7 @@ derivation cannot be read as the wrong table."
 
 (defun net--binary-end (table index)
   "Return the last address of TABLE row INDEX."
+  (declare (pure t) (side-effect-free t))
   (bindat-get-field
    (bindat-unpack (plist-get table :edge-type)
                   (plist-get table :rows)
@@ -925,10 +936,12 @@ derivation cannot be read as the wrong table."
 
 (defun net--binary-number (table index column)
   "Return from TABLE row INDEX the numeric COLUMN."
+  (declare (pure t) (side-effect-free t))
   (aref (bindat-get-field (net--binary-row table index) 'numbers) column))
 
 (defun net--binary-string (table index column)
   "Return from TABLE row INDEX the string COLUMN."
+  (declare (pure t) (side-effect-free t))
   (let ((name (aref (bindat-get-field (net--binary-row table index) 'strings)
                     column)))
     (aref (plist-get table :names) name)))
@@ -936,6 +949,7 @@ derivation cannot be read as the wrong table."
 (defun net--binary-find (table value)
   "Return the row index of TABLE that covers VALUE, or nil.
 The rows are sorted by start address and do not overlap."
+  (declare (pure t) (side-effect-free t))
   (let ((low 0)
         (high (1- (plist-get table :count))))
     (while (<= low high)
