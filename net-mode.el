@@ -63,6 +63,7 @@
 (require 'button)
 (require 'cl-lib)
 (require 'ffap)
+(require 'goto-addr)
 (require 'js)
 (require 'json)
 (require 'outline)
@@ -98,6 +99,22 @@ argument is the canonical address string."
   "Format of the JSON view buffer name.
 The argument is the name of the source inspect buffer."
   :type 'string
+  :group 'net)
+
+(defcustom net-goto-address t
+  "Whether an inspect buffer links the URLs in its text.
+When non-nil, `goto-address-mode' turns a URL or a mail address of an
+RDAP remark or of a registry note into a link, so the reader opens it
+with the keys of that mode."
+  :type 'boolean
+  :group 'net)
+
+(defcustom net-text-buttons t
+  "Whether an inspect buffer turns the addresses of its text into buttons.
+When non-nil, a remark or a note that names an address, a prefix, a
+MAC address, an AS number, a domain or a vsock address gets a button
+that opens the inspect buffer of that value."
+  :type 'boolean
   :group 'net)
 
 (defcustom net-rdap-bootstrap-url "https://rdap.org"
@@ -641,12 +658,17 @@ replaces `net-value-face' for the button text.  A nil VALUE shows
                           'help-echo "Copy this value")))
   (insert "\n"))
 
-(defun net-insert-text (label text)
+(defun net-insert-text (label text &optional plain)
   "Insert LABEL followed by TEXT without a button.
-TEXT can span several lines."
+TEXT can span several lines.  A network address inside TEXT becomes a
+button that opens its own inspect buffer, unless PLAIN is non-nil,
+which a row that names a file passes, because a file name can read as
+a domain name."
   (net--insert-label label)
-  (insert (propertize (format "%s" text) 'face 'net-muted-face)
-          "\n"))
+  (let ((start (point)))
+    (insert (propertize (format "%s" text) 'face 'net-muted-face))
+    (net--link-addresses start (point) plain)
+    (insert "\n")))
 
 (defun net-insert-file (label text file)
   "Insert LABEL and TEXT as a button that opens FILE.
@@ -665,14 +687,62 @@ and Embark find it, and in the button that `RET' pushes."
 
 (defun net--insert-link-button (kind value)
   "Insert a button that opens the KIND address VALUE."
-  (insert-text-button (format "%s" value)
-                      'net-kind kind
-                      'net-value (format "%s" value)
-                      'face 'net-value-face
-                      'follow-link t
-                      'action #'net--open-button
-                      'help-echo (format "Inspect this %s value"
-                                         (symbol-name kind))))
+  (let ((start (point))
+        (text (format "%s" value)))
+    (insert text)
+    (net--buttonize-address start (point) kind value)))
+
+(defun net--buttonize-address (start end kind value)
+  "Turn the text between START and END into a button for KIND VALUE.
+The button opens the inspect buffer of the value."
+  (make-text-button start end
+                    'net-kind kind
+                    'net-value (if (stringp value)
+                                   value
+                                 (buffer-substring-no-properties
+                                  start end))
+                    'face 'net-value-face
+                    'follow-link t
+                    'action #'net--open-button
+                    'help-echo (format "Inspect this %s value"
+                                       (symbol-name kind))))
+
+;;; Text links
+
+;; A remark or a note can name an address or a URL.  The address
+;; becomes a text button of the same shape as a link row, so the
+;; reader opens its inspect buffer from the sentence.  The URL goes
+;; through `goto-address-mode', which marks it with an overlay, so a
+;; copy of the text stays plain.
+
+(defconst net--text-token-regexp
+  "\\b[[:alnum:]][[:alnum:]:./%_-]*[[:alnum:]]\\b"
+  "Regexp for one word of a text row that can name an address.")
+
+(defun net--link-address (token start end)
+  "Turn TOKEN between START and END into a button when it names a value.
+Return non-nil when the token became a button."
+  (when-let* ((kind (net-sniff token)))
+    (net--buttonize-address start end (car kind) (cdr kind))
+    t))
+
+(defun net--link-addresses (start end &optional plain)
+  "Turn every network address between START and END into a button.
+PLAIN disables the pass for a row that carries a file name."
+  (when (and net-text-buttons (not plain))
+    (save-excursion
+      (goto-char start)
+      (while (re-search-forward net--text-token-regexp end t)
+        (net--link-address (match-string-no-properties 0)
+                           (match-beginning 0)
+                           (match-end 0))))))
+
+(defun net--init-text-links ()
+  "Link the URLs in the text of the current buffer.
+`goto-address-mode' reads the URLs through its own fontification, so
+it never touches the text of a row."
+  (when net-goto-address
+    (goto-address-mode 1)))
 
 (defun net-insert-link (label kind value)
   "Insert a button labelled LABEL that opens the KIND address VALUE."
@@ -755,7 +825,9 @@ without the buffer printing the path."
            (file (and (nth 3 item) (net--item-value (nth 3 item) source))))
        (if (net-data-available-p file)
            (net-insert-file (nth 1 item) text file)
-         (net-insert-text (nth 1 item) text))))
+         ;; A row that names an unreadable file prints a file name, and
+         ;; a file name can read as a domain name, so it keeps plain.
+         (net-insert-text (nth 1 item) text (and (nth 3 item) t)))))
     (:warning
      (net-insert-warning (net--item-value (nth 1 item) source)))))
 
@@ -1522,6 +1594,7 @@ A derived mode sets `net--render-function' to a function that calls
   (setq-local outline-level (lambda () 1))
   (setq-local outline-minor-mode-highlight nil)
   (outline-minor-mode 1)
+  (net--init-text-links)
   ;; A database row holds a short name, so `ffap' learns the real path
   ;; from the `net-file' text property.  The key matches every name,
   ;; because this body runs before `major-mode' names the derived mode.

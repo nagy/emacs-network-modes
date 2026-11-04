@@ -1722,6 +1722,74 @@ RDAP section would draw on the row of the folded heading."
                          "RDAP")))
       (kill-buffer buffer))))
 
+;;; Text links
+
+(defun net-tests--buttons ()
+  "Return the (KIND VALUE) pairs of every button of the buffer."
+  (let (result
+        (position (point-min)))
+    (while (setq position (next-button position))
+      (push (list (button-get position 'net-kind)
+                  (button-get position 'net-value))
+            result)
+      (setq position (1+ position)))
+    (nreverse result)))
+
+(ert-deftest net-tests-text-links-addresses ()
+  "Every address inside a text row becomes a button."
+  (with-temp-buffer
+    (net-mode)
+    (let ((inhibit-read-only t))
+      (net-insert-text "Note" "see 192.0.2.1 and 2001:db8::/32 for details"))
+    (should (equal (net-tests--buttons)
+                   '((ip "192.0.2.1") (cidr "2001:db8::/32"))))))
+
+(ert-deftest net-tests-text-links-none ()
+  "A text row without an address carries no button."
+  (with-temp-buffer
+    (net-mode)
+    (let ((inhibit-read-only t))
+      (net-insert-text "Note" "IANA special-purpose registry CSV"))
+    (should-not (net-tests--buttons))))
+
+(ert-deftest net-tests-text-links-file-row ()
+  "A row that names an unreadable file keeps its file name plain.
+A file name such as as-ranges-v4.bin reads as a domain name, and the
+row is not a link when the file is missing."
+  (with-temp-buffer
+    (net-mode)
+    (let ((inhibit-read-only t))
+      (net--render-item '(:text "Source" :source :sourceFile)
+                        '(:source "as-ranges-v4.bin"
+                          :sourceFile "/nonexistent/as-ranges-v4.bin")))
+    (should-not (net-tests--buttons))))
+
+(ert-deftest net-tests-text-links-url ()
+  "The mode links the URLs of its text through `goto-address-mode'."
+  (with-temp-buffer
+    (net-mode)
+    (should goto-address-mode)
+    (let ((inhibit-read-only t))
+      (net-insert-text "Note" "see https://example.org/path please"))
+    (goto-address-fontify)
+    (should (seq-some (lambda (overlay)
+                        (overlay-get overlay 'goto-address))
+                      (overlays-in (point-min) (point-max))))))
+
+(ert-deftest net-tests-text-links-remark ()
+  "An RDAP remark links the address and the mail address it names."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (let ((inhibit-read-only t))
+            (net--rdap-render
+             '((remarks . (((description . ("Report abuse to
+abuse@example.net or inspect 198.51.100.7 for details"))))))))
+          (should (member '(domain "example.net") (net-tests--buttons)))
+          (should (member '(ip "198.51.100.7") (net-tests--buttons)))
+          (should (string-match-p "abuse@example\\.net" (buffer-string))))
+      (kill-buffer buffer))))
+
 ;;; Declarations
 
 (ert-deftest net-tests-pure-helpers ()

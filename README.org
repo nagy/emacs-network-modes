@@ -87,6 +87,12 @@ the path travels in the =net-file= text property, and the mode installs
 =net--file-at-point= in the buffer-local =ffap-alist=.  Inspecting the
 same value twice reuses the same buffer.
 
+An address that a remark or a note names becomes a button, so =RET=
+opens the inspect buffer of that value.  =net-text-buttons= turns that
+pass off, and a row that names a missing database file keeps its file
+name plain.  A URL or a mail address turns into a link through
+=goto-address-mode=, which =net-goto-address= controls.
+
 ** Buffers
 
 Buffer names follow =*net-KIND VALUE*=.  The buffer name and the mode

@@ -237,6 +237,21 @@ runs the body of the parent before it sets `major-mode`, and `ffap`
 matches a symbol key with `eq`.  The alist entry stays buffer-local, so
 other buffers keep the stock `ffap` behaviour.
 
+### Text links
+
+A remark or a note can name an address or a URL.  `net-insert-text`
+runs `net--link-addresses` over the text that it inserted, and every
+token that `net-sniff` recognizes becomes a `net--buttonize-address`
+button of the same shape as a link row, so the reader opens its inspect
+buffer from inside the sentence.  `net-text-buttons` turns the pass
+off.  A `:text` item that names an unreadable file passes `PLAIN`,
+because a file name such as `as-ranges-v4.bin` reads as a domain name.
+
+URLs and mail addresses go through `goto-address-mode`, which
+`net-mode` turns on when `net-goto-address` holds.  The mode marks them
+with overlays, so a copy of the text stays plain, and it never adds a
+button that the renderer would need to know about.
+
 `embark-net.el` adds `embark-net-target-database-file`, because the
 stock Embark file finder needs a file shaped token at point, and a row
 can read `IANA special-purpose registry CSV`.
