@@ -306,6 +306,11 @@ Opening an address from a project must not put the buffer in it."
       (should (eq (alist-get 'kind record) 'ip))
       (should (equal (alist-get 'value record) "198.51.100.7")))))
 
+(ert-deftest net-tests-mode-line-value ()
+  "The mode line names the inspected value."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (should (equal mode-line-process '(" 192.0.2.1")))))
+
 (ert-deftest net-tests-bookmark-jump ()
   "Jumping to a bookmark record opens the inspect buffer."
   (let* ((record (list (cons 'handler #'net--bookmark-jump)

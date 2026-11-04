@@ -151,7 +151,10 @@ stores `net--kind`, `net--value` and `net--render-function`, then calls
 `net-refresh`, which erases the buffer and runs the renderer.  The
 refresh clears the modified flag with `set-buffer-modified-p nil`, and
 both RDAP render paths clear it too, so a read-only inspect buffer
-never shows a modified flag and never prompts on quit.  `net-mode`
+never shows a modified flag and never prompts on quit.  `net-refresh`
+also sets `mode-line-process` to the inspected value, so a narrow
+window that truncates the buffer name keeps the value in the mode
+line; the mode name supplies the kind.  `net-mode`
 also sets the buffer-local `default-directory` to
 `temporary-file-directory`, because the buffer shows network data
 and belongs to no project: `project.el`, version control and

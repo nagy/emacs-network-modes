@@ -97,7 +97,9 @@ name plain.  A URL or a mail address turns into a link through
 ** Buffers
 
 Buffer names follow =*net-KIND VALUE*=.  The buffer name and the mode
-line carry the kind and the value.  Every fact of the one-line
+line carry the kind and the value: the mode name gives the kind, and
+the value follows it, so a narrow window that truncates the buffer
+name still shows the value.  Every fact of the one-line
 classification reaches a field, so the buffer needs no header line.
 =C-x r m= bookmarks an address, because the buffer installs a bookmark
 handler.  The section headings feed Imenu, so =imenu= lists every

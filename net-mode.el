@@ -359,6 +359,10 @@ buffer, and keep the sections that the reader folded."
       (net--restore-sections collapsed)
       (net--restore-point record)
       (net--restore-window-points windows))
+    ;; The buffer name carries the value, and a narrow window truncates
+    ;; it, so the mode line names it too.
+    (setq-local mode-line-process
+                (and net--value (list (concat " " net--value))))
     (set-buffer-modified-p nil)
     (net--json-redraw)))
 
