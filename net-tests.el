@@ -1655,6 +1655,73 @@ label of the row keeps the place and not its line number."
           (should-not (string-match-p "TEST-1" (buffer-string))))
       (kill-buffer buffer))))
 
+;;; Sections
+
+(defun net-tests--heading-invisible-p (title)
+  "Return non-nil when the body of the section TITLE is folded."
+  (save-excursion
+    (goto-char (net--heading-position title))
+    (outline-invisible-p (line-end-position))))
+
+(ert-deftest net-tests-section-toggle ()
+  "A toggle folds the section around point and unfolds it again."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (should outline-minor-mode)
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (net-toggle-section)
+          (should (net-tests--heading-invisible-p "Classification"))
+          (should-not (net-tests--heading-invisible-p "Reverse DNS"))
+          (net-toggle-section)
+          (should-not (net-tests--heading-invisible-p "Classification")))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-section-toggle-outside ()
+  "A buffer without a heading refuses to fold."
+  (with-temp-buffer
+    (insert "plain text\n")
+    (net-mode)
+    (goto-char (point-min))
+    (should-not (net--enclosing-heading))
+    (should-error (net-toggle-section) :type 'user-error)))
+
+(ert-deftest net-tests-section-fold-survives-refresh ()
+  "A refresh keeps the sections that the reader folded."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (net-toggle-section)
+          (net-refresh)
+          (should (net-tests--heading-invisible-p "Classification"))
+          (should-not (net-tests--heading-invisible-p "Address")))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-section-fold-keeps-final-newline ()
+  "A fold never hides the newline that ends the buffer.
+`outline-hide-subtree' reaches `point-max' when the folded section
+ends the buffer, and Emacs then drops that line break, so a later
+RDAP section would draw on the row of the folded heading."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Host prefix")
+          (net-toggle-section)
+          (should (net-tests--heading-invisible-p "Related"))
+          (let ((end (point-max)))
+            (dolist (overlay (overlays-in (1- end) end))
+              (should (< (overlay-end overlay) end))))
+          (net--rdap-draw-section
+           (lambda () (net-insert-field "Handle" "TEST-1")))
+          (should (equal (get-text-property (net--heading-position "RDAP")
+                                            'net-heading)
+                         "RDAP")))
+      (kill-buffer buffer))))
+
 ;;; Declarations
 
 (ert-deftest net-tests-pure-helpers ()

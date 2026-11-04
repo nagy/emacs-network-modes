@@ -65,6 +65,7 @@
 (require 'ffap)
 (require 'js)
 (require 'json)
+(require 'outline)
 (require 'seq)
 (require 'subr-x)
 (require 'url)
@@ -315,10 +316,11 @@ Reuse and refresh the buffer when it already exists."
   "Render the inspected value again.
 This is the `revert-buffer-function' of every inspect buffer.  Keep
 point on the line that it was on before the render, by the identity
-of that line, and keep the line of every other window that shows the
-buffer."
+of that line, keep the line of every other window that shows the
+buffer, and keep the sections that the reader folded."
   (let ((record (net--point-record))
-        (windows (net--window-records)))
+        (windows (net--window-records))
+        (collapsed (net--collapsed-sections)))
     (let ((inhibit-read-only t))
       (erase-buffer)
       (setq net--summary nil
@@ -330,6 +332,7 @@ buffer."
             net--headings nil)
       (when net--render-function
         (funcall net--render-function))
+      (net--restore-sections collapsed)
       (net--restore-point record)
       (net--restore-window-points windows))
     (set-buffer-modified-p nil)
@@ -504,15 +507,99 @@ already show the kind and the value, and the body shows every value
 that TEXT names, so no header line repeats it."
   (setq net--summary text))
 
+;;; Sections
+
+;; A heading line carries `net-heading' with its title, and
+;; `outline-search-function' finds that text property, so no heading
+;; needs a special character in the text.  Every section is a top
+;; level section, and a render restores a fold by the title.
+
+(defun net--outline-search (&optional bound move backward looking-at)
+  "Search for the next `net-heading' text property.
+BOUND, MOVE, BACKWARD and LOOKING-AT have the meaning that
+`outline-search-function' documents."
+  (outline-search-text-property 'net-heading nil bound move backward
+                                looking-at))
+
+(defun net--enclosing-heading ()
+  "Return the start of the heading line of the section around point.
+Return nil when point sits above the first heading."
+  (save-excursion
+    (beginning-of-line)
+    (cond
+     ((get-text-property (point) 'net-heading) (point))
+     ((outline-previous-heading) (point)))))
+
+(defun net--keep-final-newline-visible ()
+  "Stop a fold from hiding the newline that ends the buffer.
+`outline-hide-subtree' reaches `point-max' when the folded section
+ends the buffer, and Emacs then drops that line break, so the heading
+of a later RDAP section would draw on the row of the folded one."
+  (let ((end (point-max)))
+    (when (> end (point-min))
+      (dolist (overlay (overlays-in (1- end) end))
+        (when (= (overlay-end overlay) end)
+          (move-overlay overlay (overlay-start overlay) (1- end)))))))
+
+(defun net-toggle-section ()
+  "Fold or unfold the network section around point.
+The command works on every line of a section, not only on the line
+that shows its heading, so a reader folds a long field table, an RDAP
+entity list or a remark body from the middle of it."
+  (interactive nil net-mode)
+  (let ((heading (net--enclosing-heading)))
+    (unless heading
+      (user-error "No network section at point"))
+    (save-excursion
+      (goto-char heading)
+      (outline-toggle-children))
+    (net--keep-final-newline-visible)))
+
+(defun net--heading-position (title)
+  "Return the start of the heading line titled TITLE, or nil."
+  (save-excursion
+    (when (net--goto-line (cons 'heading title))
+      (point))))
+
+(defun net--hide-section (title)
+  "Fold the section titled TITLE in the current buffer, when present."
+  (when-let* ((position (net--heading-position title)))
+    (save-excursion
+      (goto-char position)
+      (outline-hide-subtree)
+      (net--keep-final-newline-visible))))
+
+(defun net--collapsed-sections ()
+  "Return the titles of the folded sections of the current buffer.
+`net-refresh' reads this before it erases the buffer, so a refresh
+keeps the fold of the reader."
+  (when (bound-and-true-p outline-minor-mode)
+    (let (titles)
+      (dolist (heading net--headings)
+        (when (and (marker-position (cdr heading))
+                   (save-excursion
+                     (goto-char (cdr heading))
+                     (outline-invisible-p (line-end-position))))
+          (push (car heading) titles)))
+      (nreverse titles))))
+
+(defun net--restore-sections (titles)
+  "Fold the sections of TITLES in the current buffer."
+  (dolist (title titles)
+    (net--hide-section title)))
+
 ;;; Rendering helpers
 
 (defun net-insert-heading (title)
   "Insert TITLE as a section heading.
-Record the heading for Imenu."
+Record the heading for Imenu.  The line carries TITLE in the
+`net-heading' text property, so the outline search of `net-mode'
+finds it and a render restores a fold by name."
   (unless (bobp)
     (insert "\n"))
   (let ((start (point)))
     (insert (propertize title 'face 'net-heading-face
+                        'net-heading title
                         'net-line (cons 'heading title))
             "\n")
     (push (cons title (copy-marker start)) net--headings)))
@@ -1409,6 +1496,7 @@ STATUS is the `url-retrieve' status plist."
   "RET" #'push-button
   "TAB" #'forward-button
   "<backtab>" #'backward-button
+  "C-c TAB" #'net-toggle-section
   "w" #'net-copy-value
   "b" #'net-rdap
   "J" #'net-json-view
@@ -1426,6 +1514,14 @@ A derived mode sets `net--render-function' to a function that calls
   (setq-local revert-buffer-function #'net-refresh)
   (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
+  ;; A heading line carries `net-heading' with its title, so the
+  ;; outline search finds it and no heading needs a special character.
+  ;; Every section is a top level section.  The faces of the renderer
+  ;; stay, because the heading already carries `net-heading-face'.
+  (setq-local outline-search-function #'net--outline-search)
+  (setq-local outline-level (lambda () 1))
+  (setq-local outline-minor-mode-highlight nil)
+  (outline-minor-mode 1)
   ;; A database row holds a short name, so `ffap' learns the real path
   ;; from the `net-file' text property.  The key matches every name,
   ;; because this body runs before `major-mode' names the derived mode.

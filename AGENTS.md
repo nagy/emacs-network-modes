@@ -170,6 +170,30 @@ Imenu index.  `net-mode-map` binds `TAB` and `<backtab>` to
 or `button-mode`, which would remove the buttons when the user turns it
 off.  `J` opens the JSON view.
 
+### Folding
+
+A heading line carries its title in the `net-heading` text property,
+so `outline-search-function` finds it through
+`outline-search-text-property` and no heading needs a special character
+in the text.  `outline-level` answers one for every heading, because
+every section is a top level section, and
+`outline-minor-mode-highlight` stays nil, because the heading already
+carries `net-heading-face`.  `net-mode` turns `outline-minor-mode` on.
+
+`net-toggle-section` folds the section around point from any line of
+it, not only from its heading.  The key is `C-c TAB` and not `TAB`,
+because `TAB` already moves to the next button, and evil keeps `C-c`
+free, so the state keys of `net-evil.el` need no entry for it.  A fold
+never hides the newline that ends the buffer: `outline-hide-subtree`
+reaches `point-max` when the section ends the buffer, and Emacs then
+drops that line break, so the heading of a later RDAP section would
+draw on the row of the folded one.  `net--keep-final-newline-visible`
+moves the end of such a fold back by one.
+
+A render erases the buffer, so `net--collapsed-sections` reads the
+folded titles before the erase and `net--restore-sections` folds them
+again afterwards, by title.
+
 A mode sets `net--rdap-type` and `net--rdap-key` at the end of its
 renderer when the value has an RDAP identity.
 
