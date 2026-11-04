@@ -103,6 +103,15 @@ The argument is the name of the source inspect buffer."
   :type 'string
   :group 'net)
 
+(defcustom net-json-side-window nil
+  "Whether the JSON view opens in a side window.
+When non-nil, `net-json-view' shows the buffer at the right edge and
+keeps the inspect buffer selected, so the report and its JSON stay
+visible together.  The default replaces the report in the selected
+window, as `pop-to-buffer' does."
+  :type 'boolean
+  :group 'net)
+
 (defcustom net-goto-address t
   "Whether an inspect buffer links the URLs in its text.
 When non-nil, `goto-address-mode' turns a URL or a mail address of an
@@ -1025,12 +1034,41 @@ without the grammar builds the view on `js-json-mode' instead."
   (and (fboundp 'json-ts-mode)
        (treesit-language-available-p 'json)))
 
+(defun net--json-imenu-index ()
+  "Return an Imenu index of the members of the JSON view.
+Only a line that opens an object or an array names a member, so the
+index lists the sections of the report and not every leaf.  The
+function reads the text, so both parent modes get the same index."
+  (let (index)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward
+              "^ *\"\\([^\"]+\\)\": *[{[][ \t]*$" nil t)
+        (push (cons (match-string-no-properties 1)
+                    (line-beginning-position))
+              index)))
+    (nreverse index)))
+
+(defun net--json-show-source ()
+  "Show the inspect buffer that this JSON buffer reports on."
+  (interactive nil net-json-mode)
+  (unless (buffer-live-p net--json-source)
+    (user-error "The inspect buffer is gone"))
+  (pop-to-buffer net--json-source))
+
 (defun net--json-mode-setup ()
   "Set up the JSON view buffer."
   (setq-local revert-buffer-function #'net--json-revert)
+  (setq-local imenu-create-index-function #'net--json-imenu-index)
   (setq-local default-directory
               (file-name-as-directory temporary-file-directory))
   (setq buffer-read-only t))
+
+(defvar-keymap net-json-mode-map
+  :doc "Keymap for `net-json-mode'."
+  "q" #'quit-window
+  "g r" #'net--json-revert
+  "J" #'net--json-show-source)
 
 (if (net--json-ts-available-p)
     (define-derived-mode net-json-mode json-ts-mode "Net JSON"
@@ -1086,7 +1124,12 @@ buffer redraws it."
         (setq-local net--json-source source)
         (net--json-render source)))
     (setq-local net--json-buffer buffer)
-    (pop-to-buffer buffer)))
+    (if net-json-side-window
+        (display-buffer buffer '((display-buffer-in-side-window)
+                                 (side . right)
+                                 (window-width . 0.4)))
+      (pop-to-buffer buffer))
+    buffer))
 
 (defun net--split-csv-line (line)
   "Split LINE at commas into a list of fields.

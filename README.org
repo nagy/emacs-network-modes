@@ -166,6 +166,12 @@ names follow RDAP (RFC 9083) where the concept exists:
 }
 #+end_src
 
+=gr= renders the report again, =q= buries the JSON buffer and =J=
+returns to the inspect buffer.  The members form an Imenu index,
+so =imenu= lists each section of the report.  =net-json-side-window=
+shows the JSON at the right edge instead and keeps the report
+selected.
+
 A MAC address and a vsock address have no RDAP identity, so their
 report carries no =rdap= member.  An integer that a JSON double cannot
 hold exactly, such as an IPv6 value or a large host count, appears as

@@ -128,6 +128,15 @@ list an array, and an integer beyond 2^53-1 a string, because
 values and host counts need that.  `:json-extra` adds members that the
 buffer does not show, such as a country code next to the country name.
 
+`net-json-mode-map` binds `q` to `quit-window`, `g r` to
+`net--json-revert` and `J` to `net--json-show-source`, because the
+parent mode has no quit key and the reader arrives from the report.
+`net--json-imenu-index` reads the text and lists every line that opens
+an object or an array, so both parents get the section index that the
+tree-sitter parent lacks; a leaf stays out, which keeps the index
+short.  `net-json-side-window` shows the buffer in a side window at
+the right edge and keeps the report selected.
+
 `net-json-view` (`J`) creates a `net-json-mode` buffer, which derives
 from `json-ts-mode` when the machine carries the JSON tree-sitter
 grammar and from `js-json-mode` otherwise, because `json-ts-mode`

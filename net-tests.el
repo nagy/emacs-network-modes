@@ -1568,6 +1568,50 @@ the start of the buffer."
                  "")))
       (should (equal (net-read-address) "192.0.2.1")))))
 
+(ert-deftest net-tests-json-view-keys ()
+  "The JSON view quits, redraws and returns to its source."
+  (should (eq (lookup-key net-json-mode-map (kbd "q")) #'quit-window))
+  (should (eq (lookup-key net-json-mode-map (kbd "g r")) #'net--json-revert))
+  (should (eq (lookup-key net-json-mode-map (kbd "J")) #'net--json-show-source)))
+
+(ert-deftest net-tests-json-view-imenu ()
+  "The imenu of the JSON view lists the sections and not the leaves."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((index (net--json-imenu-index)))
+            (should (assoc "rdap" index))
+            (should (assoc "classification" index))
+            (should-not (assoc "schema" index))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-source ()
+  "The JSON view returns to the buffer that it reports on."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (should (eq (net--json-show-source) buffer))
+          (should (eq (current-buffer) buffer)))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-json-view-side-window ()
+  "The option moves the JSON view to the right edge."
+  (let ((buffer (net-ip-inspect "192.0.2.1"))
+        (net-json-side-window t))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (let ((window (get-buffer-window net--json-buffer t)))
+            (should window)
+            (should (eq (window-parameter window 'window-side) 'right))
+            (should (eq (window-buffer (selected-window)) buffer))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
 (ert-deftest net-tests-json-view-parent ()
   "The JSON view takes the parent mode that the machine can serve.
 A machine without the JSON tree-sitter grammar cannot activate
