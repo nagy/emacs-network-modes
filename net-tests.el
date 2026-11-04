@@ -44,6 +44,13 @@
 (require 'embark-net)
 (require 'net-xref)
 
+;; The Embark targets and keymaps come from embark-net.el.  The byte
+;; compiler reads neither file's definitions, so name them here.
+(defvar embark-keymap-alist)
+(defvar embark-target-finders)
+(defvar embark-net-map)
+(defvar embark-net-heading-map)
+
 (defmacro net-tests--with-file (content &rest body)
   "Write CONTENT to a temporary file, bind `net-tests--file', run BODY."
   (declare (indent 1))
@@ -1376,6 +1383,36 @@ the start of the buffer."
     (insert "nothing here")
     (goto-char (point-min))
     (should-not (net-xref-backend-function))))
+
+(ert-deftest net-tests-embark-heading ()
+  "The Embark heading target names the section of point."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (goto-char (point-min))
+    (re-search-forward "^Classification")
+    (let ((target (embark-net-target-heading)))
+      (should (eq (car target) 'net-heading))
+      (should (equal (cadr target) "Classification")))))
+
+(ert-deftest net-tests-embark-actions ()
+  "The Embark keymaps reach the JSON view, RDAP and the fold."
+  (should (eq (lookup-key embark-net-map (kbd "RET")) #'embark-net-inspect))
+  (should (eq (lookup-key embark-net-map (kbd "J")) #'embark-net-json-view))
+  (should (eq (lookup-key embark-net-map (kbd "b")) #'embark-net-rdap))
+  (should (eq (lookup-key embark-net-heading-map (kbd "TAB"))
+              #'embark-net-toggle-section)))
+
+(ert-deftest net-tests-embark-mode-registers ()
+  "The minor mode registers the targets and the keymaps, and removes them."
+  (skip-unless (require 'embark nil t))
+  (unwind-protect
+      (progn
+        (embark-net-mode 1)
+        (should (memq #'embark-net-target-heading embark-target-finders))
+        (should (assq 'net-address embark-keymap-alist))
+        (should (assq 'net-heading embark-keymap-alist)))
+    (embark-net-mode -1)
+    (should-not (memq #'embark-net-target-heading embark-target-finders))
+    (should-not (assq 'net-heading embark-keymap-alist))))
 
 (ert-deftest net-tests-embark-target ()
   "The Embark target finder returns the kind and the bounds."

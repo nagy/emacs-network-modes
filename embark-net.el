@@ -67,13 +67,17 @@
                     (point-min))))
       `(file ,(abbreviate-file-name file) ,beg . ,end))))
 
-(defun embark-net-inspect (value)
-  "Inspect the network address VALUE."
-  (interactive "sNetwork address: ")
+(defun embark-net--inspect (value)
+  "Return the inspect buffer of the network address VALUE."
   (let ((kind (net-sniff value)))
     (unless kind
       (user-error "No network mode recognizes %s" value))
     (net-open (car kind) (cdr kind))))
+
+(defun embark-net-inspect (value)
+  "Inspect the network address VALUE."
+  (interactive "sNetwork address: ")
+  (embark-net--inspect value))
 
 (defun embark-net-copy (value)
   "Copy the network address VALUE to the kill ring."
@@ -81,11 +85,48 @@
   (kill-new value)
   (message "Copied: %s" value))
 
+(defun embark-net-json-view (value)
+  "Inspect the network address VALUE and show its JSON report."
+  (interactive "sNetwork address: ")
+  (with-current-buffer (embark-net--inspect value)
+    (net-json-view)))
+
+(defun embark-net-rdap (value)
+  "Inspect the network address VALUE and fetch its RDAP data.
+The command never runs by itself, so a buffer stays offline until the
+reader acts on it."
+  (interactive "sNetwork address: ")
+  (with-current-buffer (embark-net--inspect value)
+    (net-rdap)))
+
+(defun embark-net-target-heading ()
+  "Target the section heading of an inspect buffer at point for Embark."
+  (when-let* ((title (get-text-property (line-beginning-position)
+                                        'net-heading)))
+    `(net-heading ,title ,(line-beginning-position)
+                  . ,(line-end-position))))
+
+(defun embark-net-toggle-section (title)
+  "Fold or unfold the section titled TITLE."
+  (interactive "sSection: ")
+  (unless (net--heading-position title)
+    (user-error "No section titled %s" title))
+  (save-excursion
+    (goto-char (net--heading-position title))
+    (net-toggle-section)))
+
 (defvar-keymap embark-net-map
   :doc "Keymap for Embark network address actions."
   :parent nil
   "RET" #'embark-net-inspect
-  "w" #'embark-net-copy)
+  "w" #'embark-net-copy
+  "J" #'embark-net-json-view
+  "b" #'embark-net-rdap)
+
+(defvar-keymap embark-net-heading-map
+  :doc "Keymap for Embark section actions on an inspect buffer."
+  :parent nil
+  "TAB" #'embark-net-toggle-section)
 
 ;; Global minor mode so the registration is explicit and reversible,
 ;; and so loading this file never touches Embark state on its own.
@@ -102,11 +143,17 @@
         (add-hook 'embark-target-finders #'embark-net-target-at-point)
         (add-hook 'embark-target-finders
                   #'embark-net-target-database-file)
-        (add-to-list 'embark-keymap-alist '(net-address . embark-net-map)))
+        (add-hook 'embark-target-finders #'embark-net-target-heading)
+        (add-to-list 'embark-keymap-alist '(net-address . embark-net-map))
+        (add-to-list 'embark-keymap-alist
+                     '(net-heading . embark-net-heading-map)))
     (remove-hook 'embark-target-finders #'embark-net-target-at-point)
     (remove-hook 'embark-target-finders #'embark-net-target-database-file)
+    (remove-hook 'embark-target-finders #'embark-net-target-heading)
     (setq embark-keymap-alist
-          (assq-delete-all 'net-address embark-keymap-alist))))
+          (assq-delete-all 'net-heading
+                           (assq-delete-all 'net-address
+                                            embark-keymap-alist)))))
 
 (provide 'embark-net)
 ;;; embark-net.el ends here

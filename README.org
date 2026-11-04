@@ -303,8 +303,9 @@ Four opt-in modules sit beside the modes:
 - =ol-net.el= -- Org link types =net-ip:=, =net-cidr:=, =net-mac:=,
   =net-asn:=, =net-domain:=, =net-vsock:= and the dispatching =net:=
   type
-- =embark-net.el= -- Embark target =net-address= with inspect and copy
-  actions, and the =file= target of a database row, enabled with
+- =embark-net.el= -- Embark target =net-address= with inspect, JSON
+  view, RDAP and copy actions, the =net-heading= target with a fold
+  action, and the =file= target of a database row, enabled with
   =embark-net-mode=; the row shows a short name, so a separate finder
   reads the =net-file= text property
 - =net-xref.el= -- xref backend, so =xref-find-definitions= on any

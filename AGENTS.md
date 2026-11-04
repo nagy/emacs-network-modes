@@ -286,6 +286,16 @@ button that the renderer would need to know about.
 stock Embark file finder needs a file shaped token at point, and a row
 can read `IANA special-purpose registry CSV`.
 
+`embark-net-map` binds `RET` to inspect, `J` to inspect and show the
+JSON report, `b` to inspect and fetch RDAP, and `w` to copy.
+`embark-net-target-heading` and `embark-net-heading-map` give a
+section heading one action, `TAB`, which folds or unfolds that
+section.  Every action takes its argument through `(interactive
+"s...")`, because `embark-act` injects the target into the first
+minibuffer prompt instead of calling the command with an argument.
+`embark-net-mode` adds and removes both keymaps and all three
+targets.
+
 ### Data access
 
 Each reader caches on a key of (file, modification time, size), so
