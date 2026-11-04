@@ -66,9 +66,11 @@
 (require 'goto-addr)
 (require 'js)
 (require 'json)
+(require 'json-ts-mode nil t)
 (require 'outline)
 (require 'seq)
 (require 'subr-x)
+(require 'treesit)
 (require 'url)
 (require 'url-http)
 
@@ -213,6 +215,11 @@ shows the answer exactly as the server sent it.")
   "Section headings of this buffer, newest first.
 Each element is (TITLE . MARKER).  The renderers fill it through
 `net-insert-heading', and Imenu reads it.")
+
+;; The JSON view takes its parent from the machine at load time, so its
+;; `define-derived-mode' sits inside an `if' and the byte compiler
+;; cannot see the definition.
+(declare-function net-json-mode "net-mode" (&optional arg))
 
 (defvar net-kinds nil
   "Alist of registered network address kinds.
@@ -1007,18 +1014,43 @@ the line of every other window that shows the buffer."
   (when (buffer-live-p net--json-source)
     (net--json-render net--json-source)))
 
-(define-derived-mode net-json-mode js-json-mode "Net JSON"
-  "Major mode for the JSON view of a network inspect buffer.
-The buffer shows the report of the buffer in `net--json-source' as
-pretty printed JSON.  It is read-only.  `net-json-view' creates it,
-and a refresh of the report buffer redraws it.
+(defun net--json-ts-available-p ()
+  "Return non-nil when the JSON tree-sitter grammar can serve the view.
+`json-ts-mode' signals an error without its grammar, so a machine
+without the grammar builds the view on `js-json-mode' instead."
+  (and (fboundp 'json-ts-mode)
+       (treesit-language-available-p 'json)))
 
-\\{net-json-mode-map}"
-  :group 'net
+(defun net--json-mode-setup ()
+  "Set up the JSON view buffer."
   (setq-local revert-buffer-function #'net--json-revert)
   (setq-local default-directory
               (file-name-as-directory temporary-file-directory))
   (setq buffer-read-only t))
+
+(if (net--json-ts-available-p)
+    (define-derived-mode net-json-mode json-ts-mode "Net JSON"
+      "Major mode for the JSON view of a network inspect buffer.
+The buffer shows the report of the buffer in `net--json-source' as
+pretty printed JSON.  It is read-only.  `net-json-view' creates it,
+and a refresh of the report buffer redraws it.  The machine carries
+the JSON tree-sitter grammar, so the view takes the faces and the
+navigation of `json-ts-mode'.
+
+\\{net-json-mode-map}"
+      :group 'net
+      (net--json-mode-setup))
+  (define-derived-mode net-json-mode js-json-mode "Net JSON"
+    "Major mode for the JSON view of a network inspect buffer.
+The buffer shows the report of the buffer in `net--json-source' as
+pretty printed JSON.  It is read-only.  `net-json-view' creates it,
+and a refresh of the report buffer redraws it.  The machine carries
+no JSON tree-sitter grammar, so the view takes the faces of
+`js-json-mode'.
+
+\\{net-json-mode-map}"
+    :group 'net
+    (net--json-mode-setup)))
 
 ;;;###autoload
 (defun net-json-view ()

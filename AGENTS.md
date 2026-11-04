@@ -125,7 +125,13 @@ values and host counts need that.  `:json-extra` adds members that the
 buffer does not show, such as a country code next to the country name.
 
 `net-json-view` (`J`) creates a `net-json-mode` buffer, which derives
-from `js-json-mode`.  The buffer stays read-only and shares itself: the
+from `json-ts-mode` when the machine carries the JSON tree-sitter
+grammar and from `js-json-mode` otherwise, because `json-ts-mode`
+signals an error without the grammar.  The choice happens at load time,
+so the `define-derived-mode` sits inside an `if` and the file declares
+the function for the byte compiler.  The flake check runs the suite
+twice, once without the grammar and once with the wrapper of
+`jsonGrammar`, so both parents stay tested.  The buffer stays read-only and shares itself: the
 source buffer keeps it in `net--json-buffer`, the JSON buffer keeps the
 source in `net--json-source`, `net-refresh` and both RDAP paths call
 `net--json-redraw`, and `gr` calls `net--json-revert`.  The buffer name
@@ -413,6 +419,12 @@ nix develop                # Emacs with package-lint, embark and evil
 nix fmt                    # nixfmt via treefmt
 nix flake update           # refresh pinned database files
 ```
+
+`checkPhase` runs the ERT suites twice, because the JSON view takes its
+parent mode from the machine: once without the JSON grammar and once
+with `jsonGrammar` on `treesit-extra-load-path`.  `jsonGrammar` renames
+the parser of the nixpkgs grammar package to `libtree-sitter-json.so`,
+which is the name Emacs loads.
 
 The data derivation needs `emacs-nox` and four Elisp files: `net-mode.el`
 for the `bindat` types, `net-geo.el`, `net-asn.el` and `net-ip.el` for

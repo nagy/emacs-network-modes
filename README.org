@@ -134,7 +134,9 @@ never touches the network.
 
 =M-x net-json-view= (=J=) opens a read-only buffer with the report
 that drew the inspect buffer, pretty printed as JSON.  The buffer
-makes no network access and no database lookup of its own.
+makes no network access and no database lookup of its own.  It derives
+from =json-ts-mode= when your Emacs carries the JSON tree-sitter
+grammar, and from =js-json-mode= when it does not.
 
 The JSON keys are the same keys that the report carries, so the JSON
 names follow RDAP (RFC 9083) where the concept exists:

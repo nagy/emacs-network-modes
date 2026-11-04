@@ -1517,6 +1517,22 @@ the start of the buffer."
       (kill-buffer buffer)
       (net-tests--kill-json-buffers))))
 
+(ert-deftest net-tests-json-view-parent ()
+  "The JSON view takes the parent mode that the machine can serve.
+A machine without the JSON tree-sitter grammar cannot activate
+`json-ts-mode', which signals an error, so the view falls back to
+`js-json-mode'."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (should (eq major-mode 'net-json-mode))
+          (should (if (net--json-ts-available-p)
+                      (derived-mode-p 'json-ts-mode)
+                    (derived-mode-p 'js-json-mode))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
 (ert-deftest net-tests-json-view-refuses-other-buffers ()
   "The JSON view belongs to network inspect buffers only."
   (with-temp-buffer

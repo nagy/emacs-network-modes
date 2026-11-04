@@ -169,6 +169,19 @@
                   --out-dir $out
               '';
 
+          # Emacs loads a language grammar from a file named
+          # `libtree-sitter-LANG.so', and nixpkgs installs the parser of
+          # a grammar package as `parser'.  The wrapper gives the JSON
+          # grammar the name that Emacs reads, so the JSON view can take
+          # `json-ts-mode' when the machine carries it.
+          jsonGrammar = pkgs.runCommand "tree-sitter-json-emacs" { } ''
+            mkdir -p $out
+            ln -s ${pkgs.tree-sitter-grammars.tree-sitter-json}/parser \
+              $out/libtree-sitter-json.so
+            ln -s ${pkgs.tree-sitter-grammars.tree-sitter-json}/queries \
+              $out/queries
+          '';
+
           # Date of the flake source, folded into the version string.
           # A fresh repository without commits falls back to the epoch,
           # which keeps Nix versions parseable.
@@ -240,7 +253,15 @@
                 runHook preCheck
                 evil_load_path=$(find ${evil}/share/emacs/site-lisp/elpa \
                   -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+                # The JSON view takes its parent mode from the machine,
+                # so the suite runs twice: without the JSON grammar,
+                # which serves the view through js-json-mode, and with
+                # it, which serves the view through json-ts-mode.
                 emacs --batch -L . -L "$evil_load_path" \
+                  -l net-tests.el -l net-evil-tests.el \
+                  -f ert-run-tests-batch-and-exit
+                emacs --batch -L . -L "$evil_load_path" \
+                  --eval '(setq treesit-extra-load-path (list "${jsonGrammar}"))' \
                   -l net-tests.el -l net-evil-tests.el \
                   -f ert-run-tests-batch-and-exit
                 runHook postCheck
@@ -377,7 +398,20 @@
                 p.evil
               ]))
               pkgs.nix
+              jsonGrammar
             ];
+            # Emacs reads a grammar only from `treesit-extra-load-path',
+            # and a shell cannot set a Lisp variable.  The variable below
+            # names the grammar so a developer can serve the JSON view
+            # through `json-ts-mode':
+            #
+            #   emacs -Q --batch -L . \
+            #     --eval "(setq treesit-extra-load-path \
+            #                 (list \"$NET_TREESIT_GRAMMAR\"))" \
+            #     -l net-tests.el -f ert-run-tests-batch-and-exit
+            shellHook = ''
+              export NET_TREESIT_GRAMMAR=${jsonGrammar}
+            '';
           };
         };
     };
