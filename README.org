@@ -102,7 +102,8 @@ the value follows it, so a narrow window that truncates the buffer
 name still shows the value.  Every fact of the one-line
 classification reaches a field, so the buffer needs no header line.
 =C-x r m= bookmarks an address, because the buffer installs a bookmark
-handler.  The section headings feed Imenu, so =imenu= lists every
+handler.  A bookmark records the row of point, so a jump lands on the
+field that you saved and not at the start of the report.  The section headings feed Imenu, so =imenu= lists every
 section of the buffer.  The buffer starts in =temporary-file-directory=,
 because its data comes from the network and not from a file:
 =project.el=, version control and language servers stay out of it.

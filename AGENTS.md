@@ -183,6 +183,14 @@ Imenu index.  `net-mode-map` binds `TAB` and `<backtab>` to
 or `button-mode`, which would remove the buttons when the user turns it
 off.  `J` opens the JSON view.
 
+### Bookmarks
+
+`net--bookmark-make-record` stores the kind, the value and the point
+record of `net--point-record` under `target`.  `net--bookmark-jump`
+opens the buffer and then applies the target, so a jump lands on the
+field that the reader saved.  A record without a target, or a target
+whose row is gone, lands at `point-min`.
+
 ### Folding
 
 A heading line carries its title in the `net-heading` text property,

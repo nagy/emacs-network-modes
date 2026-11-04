@@ -311,6 +311,25 @@ Opening an address from a project must not put the buffer in it."
   (with-current-buffer (net-ip-inspect "192.0.2.1")
     (should (equal mode-line-process '(" 192.0.2.1")))))
 
+(ert-deftest net-tests-bookmark-target ()
+  "A bookmark records the row of point and lands on it again."
+  (let ((buffer (net-ip-inspect "198.51.100.7")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (beginning-of-line)
+          (let* ((record (net--bookmark-make-record))
+                 (target (alist-get 'target record)))
+            (should (equal (plist-get target :identity) '(field . "Class")))
+            (kill-buffer buffer)
+            (let ((jumped (net--bookmark-jump record)))
+              (unwind-protect
+                  (with-current-buffer jumped
+                    (should (looking-at-p "Class ")))
+                (kill-buffer jumped)))))
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
 (ert-deftest net-tests-bookmark-jump ()
   "Jumping to a bookmark record opens the inspect buffer."
   (let* ((record (list (cons 'handler #'net--bookmark-jump)

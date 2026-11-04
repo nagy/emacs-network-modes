@@ -1369,16 +1369,25 @@ The rows are sorted by start address and do not overlap."
 ;;; Bookmarks
 
 (defun net--bookmark-make-record ()
-  "Return a bookmark record for the current inspect buffer."
+  "Return a bookmark record for the current inspect buffer.
+The record carries the row of point, so a jump lands on the field
+that the reader saved and not at the start of the report."
   (list (cons 'handler #'net--bookmark-jump)
         (cons 'kind net--kind)
-        (cons 'value net--value)))
+        (cons 'value net--value)
+        (cons 'target (net--point-record))))
 
 (defun net--bookmark-jump (bookmark)
-  "Jump to the address stored in BOOKMARK."
-  (let ((kind (alist-get 'kind bookmark))
-        (value (alist-get 'value bookmark)))
-    (net--open kind value)))
+  "Jump to the address stored in BOOKMARK.
+Return the inspect buffer.  A record with a target moves point to the
+row that it recorded, when that row still exists."
+  (let ((buffer (net--open (alist-get 'kind bookmark)
+                           (alist-get 'value bookmark)))
+        (target (alist-get 'target bookmark)))
+    (when (and target (buffer-live-p buffer))
+      (with-current-buffer buffer
+        (net--restore-point target)))
+    buffer))
 
 (put 'net--bookmark-jump 'bookmark-handler-type "Network address")
 
