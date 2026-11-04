@@ -1517,6 +1517,33 @@ the start of the buffer."
       (kill-buffer buffer)
       (net-tests--kill-json-buffers))))
 
+;;; The inspect prompt
+
+(ert-deftest net-tests-read-address ()
+  "The prompt announces a category and annotates the kind."
+  (let ((net-inspect-history '("192.0.2.1" "AS13335")))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt collection _predicate _require _initial _hist)
+                 (should (equal collection '("192.0.2.1" "AS13335")))
+                 (should (eq (plist-get completion-extra-properties :category)
+                             'net-address))
+                 "AS13335")))
+      (should (equal (net-read-address) "AS13335")))
+    (should (equal (net--address-annotation "AS13335") "  ASN"))
+    (should (equal (net--address-annotation "192.0.2.0/24") "  CIDR"))
+    (should-not (net--address-annotation "not an address"))))
+
+(ert-deftest net-tests-read-address-default ()
+  "Empty input answers the address at point."
+  (with-temp-buffer
+    (insert "see 192.0.2.1 here")
+    (goto-char 8)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt _collection _predicate _require initial _hist)
+                 (should (equal initial "192.0.2.1"))
+                 "")))
+      (should (equal (net-read-address) "192.0.2.1")))))
+
 (ert-deftest net-tests-json-view-parent ()
   "The JSON view takes the parent mode that the machine can serve.
 A machine without the JSON tree-sitter grammar cannot activate

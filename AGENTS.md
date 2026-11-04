@@ -71,7 +71,11 @@ the lowest:
 |`domain`|10      |Requires a dot and rejects all-numeric labels            |
 
 `net-inspect` runs the dispatcher on the token at point (the
-`net-address` thing type) or on a prompted string.  `net--thing-bounds`
+`net-address` thing type) or on a prompted string.  `net-read-address`
+serves that prompt: it completes from `net-inspect-history`, announces
+the `net-address` completion category and annotates every candidate
+with the label of the kind that recognizes it, so a completion UI shows
+`ASN` beside an AS number.  Empty input answers the address at point.  `net--thing-bounds`
 drops trailing punctuation before the sniff, so an address followed by
 a sentence period still resolves.  `net--thing-candidates` also looks
 inside a URL, so the host of `https://example.org:8443/path` resolves

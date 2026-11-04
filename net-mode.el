@@ -1717,6 +1717,31 @@ back to the raw token."
 (defvar net-inspect-history nil
   "History of values read by `net-inspect'.")
 
+(defun net--address-annotation (candidate)
+  "Return the kind label of CANDIDATE for the completion buffer.
+A candidate that no registered mode recognizes stays bare."
+  (when-let* ((kind (net-sniff candidate)))
+    (format "  %s" (or (net-kind-property (car kind) :label)
+                       (symbol-name (car kind))))))
+
+(defun net-read-address (&optional prompt)
+  "Read a network address and return it as a string.
+PROMPT defaults to \"Network address: \".  Completion offers the
+inputs of this session, because the dispatcher cannot know the
+addresses that a reader has in mind.  Every candidate carries the kind
+that recognizes it as an annotation, and the prompt announces the
+`net-address' completion category, so a completion UI shows the kind
+beside the address.  Empty input answers the address at point."
+  (let* ((default (thing-at-point 'net-address))
+         (completion-extra-properties
+          (list :category 'net-address
+                :annotation-function #'net--address-annotation
+                :display-sort-function #'identity))
+         (input (completing-read (or prompt "Network address: ")
+                                 net-inspect-history nil nil
+                                 default 'net-inspect-history)))
+    (if (string-empty-p input) default input)))
+
 ;;;###autoload
 (defun net-inspect (&optional string)
   "Inspect the network address at point or STRING.
@@ -1725,9 +1750,7 @@ IP addresses, CIDR prefixes, MAC addresses, AS numbers, domain names
 and AF_VSOCK addresses."
   (interactive
    (list (when current-prefix-arg
-           (read-string "Network address: "
-                        (thing-at-point 'net-address)
-                        'net-inspect-history))))
+           (net-read-address))))
   (let* ((input (or string (net--thing-at-point)))
          (kind (and input (net-sniff input))))
     (unless input

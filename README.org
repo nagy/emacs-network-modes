@@ -50,7 +50,8 @@ demand:
 One dispatcher finds the right mode for the token at point:
 
 - =M-x net-inspect= -- inspect the address at point, or prompt with
-  =C-u=
+  =C-u=; the prompt completes from the addresses you inspected before
+  and names the kind of each candidate beside it
 - =M-x net-ip-inspect=, =net-cidr-inspect=, =net-mac-inspect=,
   =net-asn-inspect=, =net-domain-inspect=, =net-vsock-inspect= --
   inspect one value directly
