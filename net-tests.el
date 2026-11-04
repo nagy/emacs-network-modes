@@ -1522,6 +1522,139 @@ the start of the buffer."
   (with-temp-buffer
     (should-error (net-json-view) :type 'user-error)))
 
+;;; Point keeping
+
+(defun net-tests--line-text ()
+  "Return the text of the current line without properties."
+  (buffer-substring-no-properties (line-beginning-position)
+                                  (line-end-position)))
+
+(ert-deftest net-tests-point-record-field ()
+  "A named row records its label and not its buffer position."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (beginning-of-line)
+          (let ((record (net--point-record)))
+            (should (equal (plist-get record :identity) '(field . "Class")))
+            (should (zerop (plist-get record :offset)))
+            (should (integerp (plist-get record :column)))))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-point-record-heading ()
+  "A heading row records its title."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (search-forward "Reverse DNS")
+          (beginning-of-line)
+          (should (equal (plist-get (net--point-record) :identity)
+                         '(heading . "Reverse DNS"))))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-point-record-text ()
+  "A line without a name records its text and its ordinal."
+  (with-temp-buffer
+    (insert "one\nsame\nsame\nsame\n")
+    (goto-char (point-min))
+    (forward-line 2)
+    (should (equal (plist-get (net--point-record) :identity)
+                   '(text . ("same" . 1))))
+    (net--goto-text '("same" . 2))
+    (should (equal (net-tests--line-text) "same"))
+    (should (= 4 (line-number-at-pos)))))
+
+(ert-deftest net-tests-point-record-blank-line ()
+  "A blank line leans on the named line above it."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Name ")
+          (beginning-of-line)
+          (forward-line 1)
+          (should (looking-at-p "^$"))
+          (let ((record (net--point-record)))
+            (should (equal (plist-get record :identity) '(field . "Name")))
+            (should (= 1 (plist-get record :offset)))))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-refresh-keeps-point ()
+  "A refresh keeps point on the row that it was on.
+The row moves down, because the value of the buffer grew, so the
+label of the row keeps the place and not its line number."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (beginning-of-line)
+          (let ((column 20))
+            (move-to-column column)
+            (setq net--value "2001:db8::1")
+            (net-refresh)
+            (should (string-prefix-p "Class " (net-tests--line-text)))
+            (should (= (current-column) column))))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-refresh-keeps-window-point ()
+  "A refresh keeps the line of a window that does not hold point."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (let ((other (split-window)))
+            (unwind-protect
+                (progn
+                  (set-window-buffer other buffer)
+                  (with-selected-window other
+                    (goto-char (point-min))
+                    (re-search-forward "^Class ")
+                    (beginning-of-line))
+                  (setq net--value "2001:db8::1")
+                  (net-refresh)
+                  (with-selected-window other
+                    (should (looking-at "Class"))))
+              (delete-window other))))
+      (kill-buffer buffer))))
+
+(ert-deftest net-tests-json-render-keeps-point ()
+  "A redraw of the JSON view keeps point on the same member."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-json-view)
+          (goto-char (point-min))
+          (search-forward "\"kind\"")
+          (beginning-of-line)
+          (let ((line (net-tests--line-text)))
+            (net--json-revert)
+            (should (equal (net-tests--line-text) line))))
+      (kill-buffer buffer)
+      (net-tests--kill-json-buffers))))
+
+(ert-deftest net-tests-rdap-section-keeps-point ()
+  "An RDAP section keeps the line of point when it arrives."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (beginning-of-line)
+          (net--rdap-draw-section
+           (lambda () (net-insert-field "Handle" "TEST-1")))
+          (should (looking-at "Class"))
+          (should (string-match-p "TEST-1" (buffer-string)))
+          ;; A second answer replaces the section and keeps the line.
+          (net--rdap-draw-section
+           (lambda () (net-insert-field "Handle" "TEST-2")))
+          (should (looking-at "Class"))
+          (should (string-match-p "TEST-2" (buffer-string)))
+          (should-not (string-match-p "TEST-1" (buffer-string))))
+      (kill-buffer buffer))))
+
 ;;; Declarations
 
 (ert-deftest net-tests-pure-helpers ()

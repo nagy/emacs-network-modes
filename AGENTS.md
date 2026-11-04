@@ -173,6 +173,29 @@ off.  `J` opens the JSON view.
 A mode sets `net--rdap-type` and `net--rdap-key` at the end of its
 renderer when the value has an RDAP identity.
 
+### Point keeping
+
+A render erases the buffer, so a refresh would drop point to
+`point-min` on every row.  `net--point-record` reads the row before
+the render and `net--restore-point` finds it afterwards.  The record
+names the row and not the buffer position: `net--insert-label` puts
+`(field . LABEL)` in the `net-line` text property, `net-insert-heading`
+puts `(heading . TITLE)`, and `net-insert-warning` puts
+`(warning . TEXT)`.  A line without a name falls back to the text of
+the line plus its ordinal among the equal lines above it, because an
+RDAP remark spans lines and a blank line repeats.  A line of
+whitespace alone leans on the nearest named line above it and keeps
+its distance, and the column of point travels with the line, clipped
+to the end of a shorter line.
+
+`net--window-records` and `net--restore-window-points` do the same for
+every other window that shows the buffer, because a render erases the
+text that a window point marker points into.  `net--json-render`
+keeps point the same way, through the text of the line, because the
+JSON view carries no `net-line` property.  An RDAP answer goes through
+`net--rdap-draw-section`, which replaces the section and restores the
+line, so an asynchronous answer never moves the reader.
+
 ### Database rows
 
 A row that names a database file prints a short description only.

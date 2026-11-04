@@ -313,21 +313,189 @@ Reuse and refresh the buffer when it already exists."
 
 (defun net-refresh (&rest _)
   "Render the inspected value again.
-This is the `revert-buffer-function' of every inspect buffer."
-  (let ((inhibit-read-only t))
-    (erase-buffer)
-    (setq net--summary nil
-          net--report nil
-          net--rdap-type nil
-          net--rdap-key nil
-          net--rdap-start nil
-          net--rdap-raw nil
-          net--headings nil)
-    (when net--render-function
-      (funcall net--render-function))
-    (goto-char (point-min))
+This is the `revert-buffer-function' of every inspect buffer.  Keep
+point on the line that it was on before the render, by the identity
+of that line, and keep the line of every other window that shows the
+buffer."
+  (let ((record (net--point-record))
+        (windows (net--window-records)))
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (setq net--summary nil
+            net--report nil
+            net--rdap-type nil
+            net--rdap-key nil
+            net--rdap-start nil
+            net--rdap-raw nil
+            net--headings nil)
+      (when net--render-function
+        (funcall net--render-function))
+      (net--restore-point record)
+      (net--restore-window-points windows))
     (set-buffer-modified-p nil)
     (net--json-redraw)))
+
+;;; Point keeping
+
+;; A render erases the buffer, so a refresh would move point to the
+;; start of the buffer for every line that carries no name.  The
+;; record of a position names the line and not the buffer position:
+;; the label of a field row, the title of a heading or, for a line
+;; without a name, the text of the line and its ordinal among the
+;; equal lines above it.  A remark spans several lines, so a line
+;; without a name leans on the nearest named line above it and keeps
+;; its distance from that line.  The column of point travels with the
+;; line.
+
+(defun net--line-text ()
+  "Return the text of the current line without properties."
+  (string-trim-right
+   (buffer-substring-no-properties (line-beginning-position)
+                                   (line-end-position))))
+
+(defun net--line-occurrence (text)
+  "Return the number of lines above point that hold TEXT.
+The count makes the ordinal of the line of point among the equal
+lines of the buffer, so a render keeps the right one of two equal
+lines."
+  (let ((origin (line-beginning-position)))
+    (save-excursion
+      (goto-char (point-min))
+      (let ((count 0))
+        (while (< (point) origin)
+          (when (equal (net--line-text) text)
+            (setq count (1+ count)))
+          (forward-line 1))
+        count))))
+
+(defun net--line-identity ()
+  "Return the identity of the line of point, or nil.
+The identity is the `net-line' value of a named row, a cons of a kind
+and a name, or a cons of `text' and a cons of the text of the line and
+its ordinal among the equal lines above it.  A line of whitespace
+alone has no identity, because its text would match every blank line."
+  (or (get-text-property (line-beginning-position) 'net-line)
+      (let ((text (net--line-text)))
+        (unless (string-empty-p text)
+          (cons 'text (cons text (net--line-occurrence text)))))))
+
+(defun net--point-record (&optional position)
+  "Return a record of the line at POSITION, or nil.
+POSITION defaults to point.  The record holds the identity of the
+line, the number of lines from the named line to the line of
+POSITION, and the column of POSITION.  A line without a name leans
+on the nearest named line above it.  Return nil when no line of the
+buffer has a name, because then no place exists to keep."
+  (let ((offset 0)
+        column
+        identity)
+    (save-excursion
+      (goto-char (or position (point)))
+      (setq column (- (point) (line-beginning-position)))
+      (beginning-of-line)
+      (let ((done nil))
+        (while (not done)
+          (setq identity (net--line-identity))
+          (cond (identity (setq done t))
+                ((bobp) (setq done t))
+                (t
+                 (setq offset (1+ offset))
+                 (forward-line -1))))))
+    (when identity
+      (list :identity identity :offset offset :column column))))
+
+(defun net--goto-line (identity)
+  "Move point to the first line whose `net-line' value equals IDENTITY.
+Return non-nil when such a line exists.  Leave point at `point-min'
+when no line holds that name."
+  (let ((found nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (and (not found) (not (eobp)))
+        (when (equal (get-text-property (point) 'net-line) identity)
+          (setq found (point)))
+        (forward-line 1)))
+    (prog1 (and found t)
+      (goto-char (or found (point-min))))))
+
+(defun net--goto-text (line)
+  "Move point to the line that LINE names.
+LINE is a cons of the text of a line and its ordinal among the equal
+lines above it.  Return non-nil when the function found that line.
+When the buffer holds fewer equal lines than the ordinal, the last
+one serves, because a new line can push an old one down."
+  (let ((text (car line))
+        (ordinal (cdr line))
+        (index 0)
+        (found nil)
+        (last nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward (concat "^" (regexp-quote text) "[ \t]*$")
+                                nil t)
+        (setq last (line-beginning-position))
+        (unless (or found (< index ordinal))
+          (setq found last))
+        (setq index (1+ index))))
+    (prog1 (and (or found last) t)
+      (when (or found last)
+        (goto-char (or found last))))))
+
+(defun net--goto-identity (identity)
+  "Move point to the line that IDENTITY names.
+Return non-nil when the function found that line."
+  (pcase identity
+    (`(text . ,line) (net--goto-text line))
+    (_ (net--goto-line identity))))
+
+(defun net--record-position (record)
+  "Return the buffer position that RECORD names, or nil.
+The position starts at the line that the identity of RECORD names,
+moves down by the recorded number of lines and keeps the recorded
+column, clipped to the end of a shorter line."
+  (when record
+    (save-excursion
+      (goto-char (point-min))
+      (when (net--goto-identity (plist-get record :identity))
+        (forward-line (plist-get record :offset))
+        (let ((column (plist-get record :column)))
+          (unless (zerop column)
+            (goto-char (min (+ (line-beginning-position) column)
+                            (line-end-position)))))
+        (point)))))
+
+(defun net--restore-point (record)
+  "Move point to the position that RECORD describes.
+A nil RECORD moves point to the start of the buffer, because no line
+carried a name before the render."
+  (goto-char (or (net--record-position record) (point-min))))
+
+(defun net--window-records ()
+  "Return the point record of every other window of the buffer.
+Every window but the selected one contributes one cons of the window
+and its record.  The selected window needs no entry, because its
+point is the point of the buffer.  A window whose line has no
+identity contributes a nil record."
+  (let ((buffer (current-buffer))
+        (selected (selected-window))
+        records)
+    (dolist (window (get-buffer-window-list buffer nil t))
+      (unless (eq window selected)
+        (push (cons window (net--point-record (window-point window)))
+              records)))
+    records))
+
+(defun net--restore-window-points (records)
+  "Move the point of every window of RECORDS to its recorded line.
+A window whose line is gone shows the start of the buffer, and a dead
+window stays alone."
+  (dolist (record records)
+    (let ((window (car record)))
+      (when (window-live-p window)
+        (set-window-point window
+                          (or (net--record-position (cdr record))
+                              (point-min)))))))
+
 
 (defun net-set-summary (text)
   "Set the report summary of the current buffer to TEXT.
@@ -344,7 +512,9 @@ Record the heading for Imenu."
   (unless (bobp)
     (insert "\n"))
   (let ((start (point)))
-    (insert (propertize title 'face 'net-heading-face) "\n")
+    (insert (propertize title 'face 'net-heading-face
+                        'net-line (cons 'heading title))
+            "\n")
     (push (cons title (copy-marker start)) net--headings)))
 
 (defun net--imenu-index ()
@@ -354,11 +524,18 @@ Record the heading for Imenu."
 
 (defun net--insert-label (label)
   "Insert LABEL in the label column.
-The column holds at least one space after a long LABEL."
+The column holds at least one space after a long LABEL.  A label
+names its row in the `net-line' text property, so a refresh keeps
+point on the row."
   (let* ((text (format "%s" label))
-         (padding (max 1 (- net--field-width (length text)))))
-    (insert (propertize (concat text (make-string padding ?\s))
-                        'face 'net-field-face))))
+         (padded (concat text
+                         (make-string (max 1 (- net--field-width
+                                                (length text)))
+                                      ?\s))))
+    (insert (if (string-empty-p text)
+                (propertize padded 'face 'net-field-face)
+              (propertize padded 'face 'net-field-face
+                          'net-line (cons 'field text))))))
 
 (defun net-insert-field (label value &optional face)
   "Insert LABEL and VALUE as a copyable field.
@@ -430,8 +607,11 @@ window edge instead of putting one button on each line."
   (insert "\n"))
 
 (defun net-insert-warning (text)
-  "Insert TEXT as a warning line."
-  (insert (propertize (format "%s\n" text) 'face 'net-warning-face)))
+  "Insert TEXT as a warning line.
+The line carries its own text as its `net-line' name."
+  (let ((line (format "%s\n" text)))
+    (insert (propertize line 'face 'net-warning-face
+                        'net-line (cons 'warning line)))))
 
 ;;; Reports
 
@@ -639,14 +819,19 @@ response, or nil."
                           (buffer-local-value 'net--rdap-raw source)))))))
 
 (defun net--json-render (source)
-  "Replace the current buffer with the JSON text of SOURCE."
+  "Replace the current buffer with the JSON text of SOURCE.
+Keep point on the line that it was on before the render, and keep
+the line of every other window that shows the buffer."
   (let ((inhibit-read-only t)
+        (record (net--point-record))
+        (windows (net--window-records))
         (text (net--json-text source)))
     (erase-buffer)
     (when text
       (insert text)
       (json-pretty-print-buffer))
-    (goto-char (point-min))))
+    (net--restore-point record)
+    (net--restore-window-points windows)))
 
 (defun net--json-redraw ()
   "Redraw the JSON view of the current inspect buffer."
@@ -1064,6 +1249,21 @@ Delete an earlier section first.  Return the marker at its start."
     (net-insert-heading "RDAP")
     net--rdap-start))
 
+(defun net--rdap-draw-section (body)
+  "Draw the RDAP section with BODY in the current buffer.
+BODY inserts the rows of the section.  The Source row follows them.
+An answer arrives asynchronously, so the section keeps the line of
+point: the reader who waits for an answer keeps the line that the
+reader watched, and the line of every other window follows."
+  (let ((inhibit-read-only t)
+        (record (net--point-record))
+        (windows (net--window-records)))
+    (net--rdap-begin-section)
+    (funcall body)
+    (net-insert-field "Source" (net--rdap-url))
+    (net--restore-point record)
+    (net--restore-window-points windows)))
+
 (defun net--rdap-finish (buffer)
   "Clear the RDAP state of BUFFER.
 Return non-nil when BUFFER still waited for an answer."
@@ -1083,12 +1283,11 @@ still replaces the warning line."
     (with-current-buffer buffer
       (when (net--rdap-finish buffer)
         (setq-local net--rdap-raw nil)
-        (let ((inhibit-read-only t))
-          (net--rdap-begin-section)
-          (net-insert-warning
-           (format "Lookup timed out after %d seconds" net-rdap-timeout))
-          (net-insert-field "Source" (net--rdap-url))
-          (set-buffer-modified-p nil))
+        (net--rdap-draw-section
+         (lambda ()
+           (net-insert-warning
+            (format "Lookup timed out after %d seconds" net-rdap-timeout))))
+        (set-buffer-modified-p nil)
         (net--json-redraw)))))
 
 (defun net--rdap-callback (buffer status)
@@ -1120,21 +1319,20 @@ STATUS is the `url-retrieve' status plist."
       (with-current-buffer buffer
         (net--rdap-finish buffer)
         (setq-local net--rdap-raw (and data raw))
-        (let ((inhibit-read-only t))
-          (net--rdap-begin-section)
-          (cond
-           (network-error
-            (net-insert-warning
-             (format "Lookup failed: %s" network-error)))
-           ((and (null data) status-code (>= status-code 400))
-            (net-insert-warning
-             (format "Lookup failed: HTTP %d" status-code)))
-           ((null data)
-            (net-insert-warning
-             (format "Lookup failed: %s" (or parse-error "empty answer"))))
-           (t (net--rdap-render data)))
-          (net-insert-field "Source" (net--rdap-url))
-          (set-buffer-modified-p nil))
+        (net--rdap-draw-section
+         (lambda ()
+           (cond
+            (network-error
+             (net-insert-warning
+              (format "Lookup failed: %s" network-error)))
+            ((and (null data) status-code (>= status-code 400))
+             (net-insert-warning
+              (format "Lookup failed: HTTP %d" status-code)))
+            ((null data)
+             (net-insert-warning
+              (format "Lookup failed: %s" (or parse-error "empty answer"))))
+            (t (net--rdap-render data)))))
+        (set-buffer-modified-p nil)
         (net--json-redraw)))))
 
 (defun net--rdap-entity-name (entity)

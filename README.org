@@ -97,6 +97,13 @@ section of the buffer.  The buffer starts in =temporary-file-directory=,
 because its data comes from the network and not from a file:
 =project.el=, version control and language servers stay out of it.
 
+A render erases the buffer, so =gr= and an RDAP answer keep point by
+the name of the row and not by its position.  The label of a field,
+the title of a heading or the text of the line names the row, and the
+column of point travels with it.  A report that grows therefore does
+not move the cursor, and neither does a second window that shows the
+same buffer.
+
 ** RDAP
 
 =net-rdap= (=b=) fetches =https://rdap.org/TYPE/KEY= asynchronously and
