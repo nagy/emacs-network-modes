@@ -104,7 +104,7 @@ The argument is the name of the source inspect buffer."
   :group 'net)
 
 (defcustom net-json-side-window nil
-  "Whether the JSON view opens in a side window.
+  "Non-nil if the JSON view opens in a side window.
 When non-nil, `net-json-view' shows the buffer at the right edge and
 keeps the inspect buffer selected, so the report and its JSON stay
 visible together.  The default replaces the report in the selected
@@ -113,7 +113,7 @@ window, as `pop-to-buffer' does."
   :group 'net)
 
 (defcustom net-goto-address t
-  "Whether an inspect buffer links the URLs in its text.
+  "Non-nil if an inspect buffer links the URLs in its text.
 When non-nil, `goto-address-mode' turns a URL or a mail address of an
 RDAP remark or of a registry note into a link, so the reader opens it
 with the keys of that mode."
@@ -121,7 +121,7 @@ with the keys of that mode."
   :group 'net)
 
 (defcustom net-text-buttons t
-  "Whether an inspect buffer turns the addresses of its text into buttons.
+  "Non-nil if an inspect buffer turns the addresses in its text into buttons.
 When non-nil, a remark or a note that names an address, a prefix, a
 MAC address, an AS number, a domain or a vsock address gets a button
 that opens the inspect buffer of that value."

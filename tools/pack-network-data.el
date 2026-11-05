@@ -1,4 +1,4 @@
-;;; pack-network-data.el --- pack the range databases  -*- lexical-binding: t; -*-
+;;; pack-network-data.el --- Pack the range databases  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -29,7 +29,7 @@
 ;; tables that `net--binary-table' reads.  The build runs it with the
 ;; command below; the same command works by hand:
 ;;
-;;   emacs --batch -L . -l tools/pack-network-data.el -- \
+;;   Emacs --batch -L . -l tools/pack-network-data.el -- \
 ;;     --geo-v4 user-country-ipv4.csv \
 ;;     --geo-v6 user-country-ipv6.csv \
 ;;     --asn-v4 ip2asn-v4.tsv.gz \
@@ -237,3 +237,6 @@ column counts, and DATA comes from a reader such as `net-pack--geo'."
                          (funcall reader file))))))
 
 (net-pack-main)
+
+(provide 'pack-network-data)
+;;; pack-network-data.el ends here

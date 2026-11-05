@@ -27,7 +27,7 @@
 
 ;; ERT test suite for the network address modes.  Run it with:
 ;;
-;;   emacs -Q --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
+;;   Emacs -Q --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
 
 ;;; Code:
 
@@ -78,7 +78,8 @@ Bind `net-tests--file' to the file name."
 
 (defun net-tests--packed-table (width numbers strings rows)
   "Return a packed range table as a unibyte string.
-ROWS holds (START END NUMBERS TEXTS) lists.  This mirrors
+WIDTH, NUMBERS and STRINGS describe the row layout.  ROWS holds
+lists of (START END NUMBERS TEXTS).  This mirrors
 `tools/pack-network-data.el', so a reader change fails a test."
   (let* ((indexes (make-hash-table :test #'equal))
          (names nil)
@@ -280,7 +281,7 @@ kind for `net-inspect'."
                               (buffer-string))))))
 
 (ert-deftest net-tests-modes-drop-the-project-directory ()
-  "Every inspect mode starts its buffer in `temporary-file-directory'.
+  "Every inspect mode starts its buffer in variable `temporary-file-directory'.
 The rendered data comes from the network, not from a file, so the
 buffer joins no project and no version-controlled tree."
   (let ((temporary-file-directory "/tmp/"))
@@ -292,7 +293,7 @@ buffer joins no project and no version-controlled tree."
         (should (equal default-directory "/tmp/"))))))
 
 (ert-deftest net-tests-inspect-buffer-drops-the-project-directory ()
-  "An opened inspect buffer starts in `temporary-file-directory'.
+  "An opened inspect buffer starts in variable `temporary-file-directory'.
 Opening an address from a project must not put the buffer in it."
   (let ((temporary-file-directory "/tmp/")
         (default-directory "/some/project/"))
@@ -394,7 +395,7 @@ The callback must not insert at point, which `net-refresh' leaves at
 the start of the buffer."
   (with-current-buffer (net-ip-inspect "192.0.2.1")
     (should (= (point-min) (point)))
-    (net--rdap-callback (current-buffer) '(:error (error "boom")))
+    (net--rdap-callback (current-buffer) '(:error (error "Boom")))
     (should (string-match-p "\\`Address" (buffer-string)))
     (let ((rdap (string-match "RDAP" (buffer-string)))
           (reverse-name (string-match "Reverse DNS" (buffer-string))))
@@ -409,17 +410,17 @@ the start of the buffer."
     (set-buffer-modified-p t)
     (net-refresh)
     (should-not (buffer-modified-p))
-    (net--rdap-callback (current-buffer) '(:error (error "boom")))
+    (net--rdap-callback (current-buffer) '(:error (error "Boom")))
     (should-not (buffer-modified-p))))
 
 (ert-deftest net-tests-rdap-replaces-section ()
   "A second lookup replaces the earlier RDAP section."
   (with-current-buffer (net-ip-inspect "192.0.2.1")
-    (net--rdap-callback (current-buffer) '(:error (error "first")))
-    (net--rdap-callback (current-buffer) '(:error (error "second")))
+    (net--rdap-callback (current-buffer) '(:error (error "First")))
+    (net--rdap-callback (current-buffer) '(:error (error "Second")))
     (should (= (how-many "^RDAP$" (point-min) (point-max)) 1))
-    (should (string-match-p "second" (buffer-string)))
-    (should-not (string-match-p "first" (buffer-string)))))
+    (should (string-match-p "Second" (buffer-string)))
+    (should-not (string-match-p "First" (buffer-string)))))
 
 (ert-deftest net-tests-rdap-render-error ()
   "An RDAP error object renders its code, title and description."

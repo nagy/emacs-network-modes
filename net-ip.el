@@ -49,8 +49,11 @@
 (require 'net-mode)
 (require 'seq)
 
-(defconst net-ip--ipv4-bits 32)
-(defconst net-ip--ipv6-bits 128)
+(defconst net-ip--ipv4-bits 32
+  "Number of bits in an IPv4 address.")
+
+(defconst net-ip--ipv6-bits 128
+  "Number of bits in an IPv6 address.")
 
 (defconst net-ip--builtin-blocks
   '((:cidr "0.0.0.0/8" :name "This network" :rfc "RFC 791" :private nil)
