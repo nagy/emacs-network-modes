@@ -15,27 +15,38 @@ the network, and it runs only when invoked.
 
 ## Files
 
-|File                        |Purpose                                                                                                                                                                                                |
-|----------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|`network-modes.el`          |Entry library and package namesake: requires the base mode and all six modes, then provides the feature `network-modes`. `(use-package network-modes ...)` and `:ensure t` load and resolve through it.|
-|`net-mode.el`               |Base mode, kind registry, dispatcher, renderer, point keeping, folding, text links, bookmarks, RDAP, JSON view                                                                                          |
-|`net-geo.el`                |Country lookup from packed range tables or PDDL CSVs                                                                                                                                                   |
-|`net-ip.el`                 |IP parsing/formatting, blocks, registry reader, origin AS, IP mode                                                                                                                                     |
-|`net-cidr.el`               |Prefix arithmetic, CIDR mode                                                                                                                                                                           |
-|`net-mac.el`                |MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup                                                                                                                                            |
-|`net-asn.el`                |AS parsing, IANA registry, ipverse metadata, IP to AS ranges, ASN mode                                                                                                                                 |
-|`net-domain.el`             |Domain parsing, Punycode encoder, PSL lookup, domain mode                                                                                                                                              |
-|`net-vsock.el`              |AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode                                                                                                                                      |
-|`ol-net.el`                 |Opt-in Org link types (`net-*:` and `net:`)                                                                                                                                                            |
-|`embark-net.el`             |Opt-in Embark target and actions (`embark-net-mode`)                                                                                                                                                   |
-|`net-xref.el`               |Opt-in xref backend                                                                                                                                                                                    |
-|`net-evil.el`               |Opt-in evil bindings (`net-evil-mode`)                                                                                                                                                                 |
-|`net-tests.el`              |ERT suite (131 tests)                                                                                                                                                                                  |
-|`net-evil-tests.el`         |ERT suite for the evil bindings (8 tests)                                                                                                                                                              |
-|`flake.nix`                 |Database inputs and derivation, `melpaBuild`, outputs and checks                                                                                                                                       |
-|`tools/pack-network-data.el`|Packs the range databases into fixed-width tables                                                                                                                                                      |
-|`README.org`                |User documentation                                                                                                                                                                                     |
-|`LICENSE`                   |AGPL-3.0-or-later                                                                                                                                                                                      |
+|File                               |Purpose|
+|-----------------------------------|------------------------------------------------------------|
+|`network-modes.el`                 |Entry library and package namesake: requires the base mode and all six modes, then provides the feature `network-modes`. `(use-package network-modes ...)` and `:ensure t` load and resolve through it.|
+|`net-mode.el`                      |Base mode, kind registry, dispatcher, renderer, point keeping, folding, text links, bookmarks, RDAP, JSON view|
+|`net-geo.el`                       |Country lookup from packed range tables or PDDL CSVs|
+|`net-ip.el`                        |IP parsing/formatting, blocks, registry reader, origin AS, IP mode|
+|`net-cidr.el`                      |Prefix arithmetic, CIDR mode|
+|`net-mac.el`                       |MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup|
+|`net-asn.el`                       |AS parsing, IANA registry, ipverse metadata, IP to AS ranges, ASN mode|
+|`net-domain.el`                    |Domain parsing, Punycode encoder, PSL lookup, domain mode|
+|`net-vsock.el`                     |AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode|
+|`ol-net.el`                        |Opt-in Org link types (`net-*:` and `net:`)|
+|`embark-net.el`                    |Opt-in Embark target and actions (`embark-net-mode`)|
+|`net-xref.el`                      |Opt-in xref backend|
+|`net-evil.el`                      |Opt-in evil bindings (`net-evil-mode`)|
+|`test/network-modes-test-helper.el`|Shared ERT fixtures: temporary-file macros, packed table builder, IP number helper|
+|`test/net-mode-test.el`            |ERT suite for the base mode, the JSON view, point keeping, folding and text links (71 tests)|
+|`test/net-asn-test.el`             |ERT suite for AS numbers and the IP to AS ranges (16 tests)|
+|`test/net-ip-test.el`              |ERT suite for IP addresses (12 tests)|
+|`test/net-domain-test.el`          |ERT suite for domain names and the PSL (8 tests)|
+|`test/net-cidr-test.el`            |ERT suite for CIDR prefixes (7 tests)|
+|`test/net-mac-test.el`             |ERT suite for MAC addresses (5 tests)|
+|`test/net-evil-test.el`            |ERT suite for the evil bindings (8 tests)|
+|`test/net-vsock-test.el`           |ERT suite for AF_VSOCK addresses (3 tests)|
+|`test/net-geo-test.el`             |ERT suite for the country lookup (3 tests)|
+|`test/embark-net-test.el`          |ERT suite for the Embark targets (4 tests)|
+|`test/net-xref-test.el`            |ERT suite for the xref backend (1 test)|
+|`test/network-modes-test.el`       |ERT suite for the entry library (1 test)|
+|`flake.nix`                        |Database inputs and derivation, `melpaBuild`, outputs and checks|
+|`tools/pack-network-data.el`       |Packs the range databases into fixed-width tables|
+|`README.org`                       |User documentation|
+|`LICENSE`                          |AGPL-3.0-or-later|
 
 ## Dependencies
 
@@ -496,36 +507,50 @@ directory with `-L` for that file, the way the flake check does.
 ## Testing
 
 ```sh
-emacs -Q --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
+emacs -Q --batch -L . -L test \
+  $(printf -- "-l %s " test/*-test.el) \
+  -f ert-run-tests-batch-and-exit
 ```
 
-`net-evil-tests.el` needs evil on the load path.  Every test in it skips
-when evil is absent, so a checkout without evil still passes:
+`test/net-evil-test.el` needs evil on the load path.  Every test in it
+skips when evil is absent, so a checkout without evil still passes:
 
 ```sh
-emacs -Q --batch -L . -L "$EVIL_DIR" \
-  -l net-tests.el -l net-evil-tests.el \
+emacs -Q --batch -L . -L test -L "$EVIL_DIR" \
+  $(printf -- "-l %s " test/*-test.el) \
   -f ert-run-tests-batch-and-exit
 ```
 
 The suite uses temporary files for every database, so it never depends
-on the store paths of the Nix build.  Test files carry the `-tests.el`
-suffix, which package-build and the lint gates exclude.
+on the store paths of the Nix build.  One file per source unit lives in
+`test/` and ends in `-test.el`; shared fixtures and stubs live in
+`test/network-modes-test-helper.el`, whose name stays outside the glob.
+A new test file needs no flake edit, because `checkPhase` expands the
+same glob.  Every test file loads the helper, so the check adds `test/`
+to the load path.
 
 `nix flake check` runs four gates:
 
 - `packages.network-modes`: `melpaBuild` byte-compiles with warnings as
-  errors, then runs both ERT suites in its `checkPhase`.  The build
-  supplies the evil elisp directory to `preInstall` and to the check,
-  because `net-evil.el` is optional and the package declares no evil
-  dependency.
-- `checks.package-lint`: ELPA policy.  The package shares the short
-  `net-` prefix, so the check whitelists it.
-- `checks.checkdoc`: docstring conventions.  checkdoc exits 0 on
-  findings, so the check fails on non-empty output.
+  errors, then copies `test/` back into the build and runs the globbed
+  suite twice in its `checkPhase`.  The build supplies the evil elisp
+  directory to `preInstall` and to the check, because `net-evil.el` is
+  optional and the package declares no evil dependency.
+- `checks.package-lint`: ELPA policy on the modes and on `test/*.el`.
+  The package shares the short `net-` prefix, so the check whitelists
+  it, and `network-modes.el` serves as the main file for every test
+  file.
+- `checks.checkdoc`: docstring conventions in the modes and in
+  `test/*.el`.  checkdoc exits 0 on findings, so the check fails on
+  non-empty output.
 - `checks.data-tables`: runs the packed table readers against the real
   data derivation, so the packer and the Elisp decoder cannot drift
   apart unnoticed.
+
+Every check that runs Emacs takes `pkgs.writableTmpDirAsHomeHook` in
+`nativeBuildInputs`.  The hook gives the derivation a private writable
+home, so Emacs can write `~/.emacs.d` and tramp caches without sharing
+state with a concurrent check.  No check writes `export HOME=$TMPDIR`.
 
 ## Conventions
 
@@ -612,10 +637,17 @@ suffix, which package-build and the lint gates exclude.
   activates a map only while that symbol holds a value, so turning
   `net-evil-local-mode` on or off needs no `evil-normalize-keymaps`
   call.
-- `net-evil-tests.el` calls `evil-local-mode` and then reads
+- `test/net-evil-test.el` calls `evil-local-mode` and then reads
   `key-binding`, so it tests what the keyboard sees, not the keymap
   directly.  It declares every evil function it calls, so a checkout
   without evil still byte-compiles.
+- Test files carry the `-test.el` suffix and live in `test/`, so the
+  checkPhase glob finds them and a new unit needs no flake edit.  The
+  shared fixture library `test/network-modes-test-helper.el` stays out
+  of that glob on purpose.  `ert-deftest` names read
+  `net-KIND-test-BEHAVIOR`, one KIND per file, so a selector such as
+  `-t net-asn-test` runs one unit.  Helper symbols use the `net-test--`
+  prefix, because `net-tests--` would read as a test name up front.
 
 ## TODO
 

@@ -350,7 +350,9 @@ removes the keys for every inspect buffer, existing or new.
 * Testing
 
 #+begin_src sh
-emacs -Q --batch -L . -l net-tests.el -f ert-run-tests-batch-and-exit
+emacs -Q --batch -L . -L test \
+  $(printf -- "-l %s " test/*-test.el) \
+  -f ert-run-tests-batch-and-exit
 #+end_src
 
 The suite covers parsers, formatters, CIDR arithmetic, Punycode test
@@ -363,10 +365,14 @@ The evil tests skip themselves when evil is absent.  Add the evil
 elisp directory to the load path to run them:
 
 #+begin_src sh
-emacs -Q --batch -L . -L "$EVIL_DIR" \
-  -l net-tests.el -l net-evil-tests.el \
+emacs -Q --batch -L . -L test -L "$EVIL_DIR" \
+  $(printf -- "-l %s " test/*-test.el) \
   -f ert-run-tests-batch-and-exit
 #+end_src
+
+One file per source unit lives in =test/= and ends in =-test.el=.
+Shared fixtures live in =test/network-modes-test-helper.el=, which the
+glob leaves out.  A new test file needs no flake edit.
 
 * Conventions
 

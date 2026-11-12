@@ -1,4 +1,4 @@
-;;; net-evil-tests.el --- ERT tests for net-evil  -*- lexical-binding: t; -*-
+;;; net-evil-test.el --- ERT tests for net-evil  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -60,7 +60,7 @@
 
 ;;; Bindings
 
-(ert-deftest net-evil-normal-keys ()
+(ert-deftest net-evil-test-normal-keys ()
   "Normal state runs the inspect commands of `net-mode-map'."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -72,7 +72,7 @@
       (should (eq (key-binding (key-parse (car binding)))
                   (cdr binding))))))
 
-(ert-deftest net-evil-keeps-motions ()
+(ert-deftest net-evil-test-keeps-motions ()
   "The evil motions survive the bindings of the local minor mode."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -89,7 +89,7 @@
     (should (eq (key-binding (kbd "n")) #'evil-search-next))
     (should (eq (key-binding (kbd "N")) #'evil-search-previous))))
 
-(ert-deftest net-evil-visual-keys ()
+(ert-deftest net-evil-test-visual-keys ()
   "Visual state follows the button at point with RET."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -102,7 +102,7 @@
       (should (eq (key-binding (key-parse (car binding)))
                   (cdr binding))))))
 
-(ert-deftest net-evil-ret-copies-a-field ()
+(ert-deftest net-evil-test-ret-copies-a-field ()
   "RET on a field button copies its value."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -120,7 +120,7 @@
 
 ;;; Global mode
 
-(ert-deftest net-evil-mode-enables-net-buffers ()
+(ert-deftest net-evil-test-mode-enables-net-buffers ()
   "The global mode turns on the local mode, and only there."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -135,7 +135,7 @@
           (should-not (bound-and-true-p net-evil-local-mode))))
     (net-evil-mode -1)))
 
-(ert-deftest net-evil-mode-disables-local-mode ()
+(ert-deftest net-evil-test-mode-disables-local-mode ()
   "Turning the global mode off gives the buffer back to `net-mode-map'."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -150,7 +150,7 @@
         (should (eq (key-binding (kbd "w")) #'evil-forward-word-begin)))
     (net-evil-mode -1)))
 
-(ert-deftest net-evil-mode-covers-existing-buffers ()
+(ert-deftest net-evil-test-mode-covers-existing-buffers ()
   "Turning the global mode on reaches buffers that already exist."
   (skip-unless (require 'evil nil t))
   (require 'net-evil)
@@ -168,7 +168,7 @@
 
 ;;; Autoloads
 
-(ert-deftest net-evil-autoloads ()
+(ert-deftest net-evil-test-autoloads ()
   "The global mode carries an autoload cookie.
 A fresh install reaches `net-evil-mode' without a `require'."
   (let ((source (with-temp-buffer
@@ -179,5 +179,5 @@ A fresh install reaches `net-evil-mode' without a `require'."
              "^;;;###autoload\n(define-minor-mode net-evil-mode\\b"
              source))))
 
-(provide 'net-evil-tests)
-;;; net-evil-tests.el ends here
+(provide 'net-evil-test)
+;;; net-evil-test.el ends here

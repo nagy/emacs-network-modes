@@ -244,7 +244,7 @@
               '';
 
               # The ERT suite needs no external Elisp dependencies except
-              # evil, which net-evil-tests.el skips without.  The check
+              # evil, which net-evil-test.el skips without.  The check
               # phase supplies the evil elisp directory, so the optional
               # layer is compiled and tested while the package stays free
               # of the dependency.
@@ -253,17 +253,29 @@
                 runHook preCheck
                 evil_load_path=$(find ${evil}/share/emacs/site-lisp/elpa \
                   -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+                # melpaBuild stages root *.el files only, so the test tree
+                # comes back from the store before the glob can see it.
+                cp -r ${./test} ./test
+                # printf repeats "-l %s" once per match, which turns the
+                # glob into -l <file> argument pairs.  failglob makes an
+                # empty glob a shell error, so the || guard fires even
+                # without `set -e'.  A new test file then needs no flake
+                # edit, and a broken glob cannot pass zero tests.
+                shopt -s failglob
+                test_args=$(printf -- "-l %s " test/*-test.el) || {
+                  echo 'no tests matched test/*-test.el' >&2
+                  exit 1
+                }
+                shopt -u failglob
                 # The JSON view takes its parent mode from the machine,
                 # so the suite runs twice: without the JSON grammar,
                 # which serves the view through js-json-mode, and with
                 # it, which serves the view through json-ts-mode.
-                emacs --batch -L . -L "$evil_load_path" \
-                  -l net-tests.el -l net-evil-tests.el \
-                  -f ert-run-tests-batch-and-exit
-                emacs --batch -L . -L "$evil_load_path" \
+                emacs --batch -L . -L test -L "$evil_load_path" \
+                  $test_args -f ert-run-tests-batch-and-exit
+                emacs --batch -L . -L test -L "$evil_load_path" \
                   --eval '(setq treesit-extra-load-path (list "${jsonGrammar}"))' \
-                  -l net-tests.el -l net-evil-tests.el \
-                  -f ert-run-tests-batch-and-exit
+                  $test_args -f ert-run-tests-batch-and-exit
                 runHook postCheck
               '';
 
@@ -300,17 +312,17 @@
             }
           ) { inherit version; };
 
-          # Sources without the test suite, used by the two lint gates.
+          # Sources plus the test tree, used by the two lint gates.
+          # The test files share the lint rules of the modes, so a
+          # docstring defect there fails the same check.
           lintFiles = ''
-            export HOME=$TMPDIR
             mode_files=()
             for file in "$src"/*.el; do
-              case "$file" in
-                *-tests.el) continue ;;
-              esac
               cp "$file" .
               mode_files+=("$(basename "$file")")
             done
+            cp -r "$src"/test .
+            test_files=(test/*.el)
           '';
         in
         {
@@ -332,7 +344,14 @@
           checks.data-tables =
             pkgs.runCommandLocal "network-modes-data-tables"
               {
-                nativeBuildInputs = [ pkgs.emacs ];
+                nativeBuildInputs = [
+                  pkgs.emacs
+                  # Emacs writes `~/.emacs.d' and tramp caches, so the
+                  # builder needs a writable home.  The hook gives each
+                  # derivation a private one, so two checks never leak
+                  # state into each other.
+                  pkgs.writableTmpDirAsHomeHook
+                ];
                 src = networkModes.src;
               }
               ''
@@ -349,12 +368,20 @@
 
           # package-lint: ELPA policy (headers, symbol prefixes,
           # dependency declarations).  The package shares the short
-          # `net-' prefix across files, so whitelist it.
+          # `net-' prefix across files, so whitelist it.  The mode
+          # files lint as separate packages, the way they always did,
+          # because embark-net.el and ol-net.el keep their own prefixes
+          # and their own headers.  The test files lint against the
+          # entry library as main file, so package-lint reads them as
+          # part of network-modes and not as packages of their own.
           checks.package-lint =
             pkgs.runCommandLocal "network-modes-package-lint"
               {
                 nativeBuildInputs = [
                   (pkgs.emacsPackages.emacsWithPackages (p: [ p.package-lint ]))
+                  # Private writable home for Emacs, so no check shares
+                  # `~/.emacs.d' with another one.
+                  pkgs.writableTmpDirAsHomeHook
                 ];
                 src = networkModes.src;
               }
@@ -366,6 +393,12 @@
                   -f package-lint-batch-and-exit \
                   "''${mode_files[@]}"
 
+                emacs --batch -l package-lint \
+                  --eval '(setq package-lint-main-file "network-modes.el")' \
+                  --eval '(setq package-lint--sane-prefixes (concat package-lint--sane-prefixes "\\|\\`net-"))' \
+                  -f package-lint-batch-and-exit \
+                  "''${test_files[@]}"
+
                 touch $out
               '';
 
@@ -375,7 +408,12 @@
           checks.checkdoc =
             pkgs.runCommandLocal "network-modes-checkdoc"
               {
-                nativeBuildInputs = [ pkgs.emacs ];
+                nativeBuildInputs = [
+                  pkgs.emacs
+                  # Private writable home for Emacs, so no check shares
+                  # `~/.emacs.d' with another one.
+                  pkgs.writableTmpDirAsHomeHook
+                ];
                 src = networkModes.src;
               }
               ''
@@ -384,7 +422,7 @@
                 lint_log=$(emacs --batch -l checkdoc \
                   --eval '(setq checkdoc-arguments-in-order-flag t)' \
                   --eval "(mapc #'checkdoc-file command-line-args-left)" \
-                  "''${mode_files[@]}" 2>&1)
+                  "''${mode_files[@]}" "''${test_files[@]}" 2>&1)
                 if [ -n "$lint_log" ]; then printf '%s\n' "$lint_log"; exit 1; fi
                 touch $out
               '';
@@ -405,10 +443,11 @@
             # names the grammar so a developer can serve the JSON view
             # through `json-ts-mode':
             #
-            #   emacs -Q --batch -L . \
+            #   emacs -Q --batch -L . -L test \
             #     --eval "(setq treesit-extra-load-path \
             #                 (list \"$NET_TREESIT_GRAMMAR\"))" \
-            #     -l net-tests.el -f ert-run-tests-batch-and-exit
+            #     $(printf -- "-l %s " test/*-test.el) \
+            #     -f ert-run-tests-batch-and-exit
             shellHook = ''
               export NET_TREESIT_GRAMMAR=${jsonGrammar}
             '';
