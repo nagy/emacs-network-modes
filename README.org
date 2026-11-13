@@ -295,11 +295,19 @@ user-country-ipv6.csv
 nix build                  # build the package
 nix flake check            # package, ERT suite, package-lint, checkdoc, treefmt
 nix develop                # Emacs with package-lint, embark, evil, magit-section
-nix flake update           # refresh every pinned database
+nix flake update           # refresh the live database inputs
 #+end_src
 
 =flake.nix= pins the databases as plain file inputs; =flake.lock= holds
-their hashes.  The flake collects them in one derivation and substitutes
+their hashes.  A moving ref would pull new data on every =nix flake
+update=, so the AS metadata and the two GeoIP files name a fixed commit
+instead: =as.json= comes from a pinned =github:= input, and each GeoIP
+CSV is one raw file of =sapics/ip-location-db= at a pinned commit,
+because the whole repository is too large to fetch.  Bump either one by
+hand, in =flake.nix=.  The IEEE registries, the IANA registries and the
+IP to AS ranges exist only in their current version, so those stay
+plain file inputs and =nix flake update= refreshes them.  The flake
+collects every database in one derivation and substitutes
 =net-data-directory= with its store path, so the installed package finds
 every database without configuration.  The Public Suffix List comes from
 nixpkgs (=publicsuffix-list=).

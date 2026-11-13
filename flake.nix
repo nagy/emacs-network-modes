@@ -10,24 +10,43 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Databases.  Pinned as plain files, so `nix flake update' refreshes
-    # them and flake.lock holds the hash.  None of them is vendored in
-    # the repository.
+    # Databases.  None of them is vendored in the repository.
+    #
+    # A branch ref or a `latest' release moves, so `nix flake update'
+    # would pull new data on every run and two builds of one commit
+    # would differ.  The three inputs below name a fixed commit
+    # instead, so they stay put until someone bumps them by hand.
+    #
+    # as-metadata: bump the `rev' to a newer commit of the default
+    # branch.  Get it with:
+    #   git ls-remote https://github.com/ipverse/as-metadata master
+    # rev 2026-11-13.
     asMetadata = {
-      url = "https://raw.githubusercontent.com/ipverse/as-metadata/master/as.json";
-      type = "file";
+      url = "github:ipverse/as-metadata?rev=f8c6f2ce07bc365a6d36dbbf272ee3de12b59895";
       flake = false;
     };
+    # ip-location-db: the CSV files live in the git tree, and the
+    # project publishes no dated release, only the moving `latest'
+    # tag.  The whole repository is 2.4 GB, so the input names one raw
+    # file at a fixed commit.  Bump the hash in both URLs together and
+    # take the commit of the default branch:
+    #   git ls-remote https://github.com/sapics/ip-location-db main
+    # rev 2026-11-13.
     geoipV4 = {
-      url = "https://github.com/sapics/ip-location-db/releases/download/latest/user-country-ipv4.csv";
+      url = "https://raw.githubusercontent.com/sapics/ip-location-db/5773e501e8ebc8abc49865b7ee6c64885ab1f4a0/user-country/user-country-ipv4.csv";
       type = "file";
       flake = false;
     };
     geoipV6 = {
-      url = "https://github.com/sapics/ip-location-db/releases/download/latest/user-country-ipv6.csv";
+      url = "https://raw.githubusercontent.com/sapics/ip-location-db/5773e501e8ebc8abc49865b7ee6c64885ab1f4a0/user-country/user-country-ipv6.csv";
       type = "file";
       flake = false;
     };
+    # IEEE, IANA and iptoasn publish only the current file, with no
+    # commit or dated release to point at.  They stay plain file
+    # inputs: `nix flake update' moves them deliberately, and
+    # flake.lock holds the hash of the copy in use.
+    #
     # IEEE MAC address registries.  The five files split the vendor
     # data by assignment size, and each row names its registry.
     ieeeCid = {
@@ -139,7 +158,7 @@
               }
               ''
                 mkdir -p $out
-                ln -s ${inputs.asMetadata} $out/as.json
+                ln -s ${inputs.asMetadata}/as.json $out/as.json
                 ln -s ${inputs.geoipV4} $out/user-country-ipv4.csv
                 ln -s ${inputs.geoipV6} $out/user-country-ipv6.csv
                 ln -s ${inputs.ianaAsn16} $out/as-numbers-1.csv

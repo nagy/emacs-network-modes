@@ -66,7 +66,11 @@ evil, but `Package-Requires` stays free of it, so a user without evil
 installs nothing extra.
 
 Optional runtime data is listed in README.org.  No database is vendored
-in the repository; the flake pins them as file inputs.
+in the repository.  The AS metadata and the two GeoIP files name a
+fixed commit, so `nix flake update` never moves them; a bump edits
+`flake.nix` by hand.  The IEEE, IANA and iptoasn files exist only in
+their current version, so they stay plain file inputs that `nix flake
+update` refreshes.
 
 ## Architecture
 
