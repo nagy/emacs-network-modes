@@ -5,9 +5,9 @@
 Read-only Emacs major modes for inspecting network addresses.
 
 Each mode displays one address of its kind, parses it locally, and adds
-whatever the pinned offline databases know about it.  Every buffer is a
-plain `special-mode' derivative: no network access happens when a buffer
-opens.
+whatever the pinned offline databases know about it.  Every buffer is
+read-only and folds through =magit-section=: no network access happens
+when a buffer opens.
 
 * Modes
 
@@ -39,6 +39,11 @@ that name:
   (setq net-buffer-name-format "*net-%s %s*"))
 #+end_src
 
+The only required package is =magit-section= (MELPA, from Magit 4),
+which supplies the section tree, the fold keys and the section motion.
+The package declares it, so the package manager installs it with
+=network-modes=.  Emacs 31.1 or newer is required.
+
 A caller that needs only the dispatcher loads the base library
 instead.  =net-inspect= then requires the six kind libraries on
 demand:
@@ -65,18 +70,23 @@ a URL counts as an address.
 
 ** Key bindings
 
-| Key     | Command            | Description                        |
-|---------+--------------------+------------------------------------|
-| =RET=     | =push-button=        | follow a field or address button   |
-| =TAB=     | =forward-button=     | move to the next button            |
-| =S-TAB=   | =backward-button=    | move to the previous button        |
-| =C-c TAB= | =net-toggle-section= | fold or unfold the section         |
-| =q=       | =quit-window=        | bury the inspect buffer            |
-| =gr=      | =revert-buffer=      | render the value again             |
-| =w=       | =net-copy-value=     | copy the inspected value           |
-| =b=       | =net-rdap=           | fetch RDAP data for this value     |
-| =J=       | =net-json-view=      | show the JSON report of this value |
-| =i=       | =net-inspect=        | inspect the address at point       |
+| Key       | Command                 | Description                            |
+|-----------+-------------------------+----------------------------------------|
+| =RET=       | =push-button=             | follow a field or address button       |
+| =TAB=       | =net-toggle-section=      | fold the nearest section with a body   |
+| =TAB=       | =forward-button=          | on a value button: next button         |
+| =C-c TAB=   | =magit-section-cycle=     | cycle the fold of a section            |
+| =S-TAB=     | =magit-section-cycle-global= | cycle every fold                    |
+| =n=, =p=    | =magit-section-forward=, =-backward= | next, previous section      |
+| =M-n=, =M-p= | sibling motion        | next, previous section of one parent   |
+| =^=         | =magit-section-up=        | go to the parent section               |
+| =1= to =4=  | =magit-section-show-level-N= | show that many levels             |
+| =q=         | =quit-window=             | bury the inspect buffer                |
+| =gr=        | =revert-buffer=           | render the value again                 |
+| =w=         | =net-copy-value=          | copy the inspected value               |
+| =b=         | =net-rdap=                | fetch RDAP data for this value         |
+| =J=         | =net-json-view=           | show the JSON report of this value     |
+| =i=         | =net-inspect=             | inspect the address at point           |
 
 Every field is a button: =RET= or the button's default action copies
 its value.  Related addresses (host prefix, parent prefix, embedded
@@ -109,18 +119,42 @@ because its data comes from the network and not from a file:
 =project.el=, version control and language servers stay out of it.
 
 A render erases the buffer, so =gr= and an RDAP answer keep point by
-the name of the row and not by its position.  The label of a field,
-the title of a heading or the text of the line names the row, and the
-column of point travels with it.  A report that grows therefore does
-not move the cursor, and neither does a second window that shows the
-same buffer.
+the identity of the row and not by its position.  A heading and every
+row of it own a section each, so a new row above the cursor moves the
+cursor with its row, and the column of point travels with it.  A report
+that grows therefore does not move the cursor, and neither does a
+second window that shows the same buffer.
 
-=C-c TAB= folds the section around point, from any line of it.  The
-buffer folds through =outline-minor-mode=, so =outline-cycle=,
-=outline-hide-other= and the other outline commands work too.  A
-refresh keeps the sections that you folded.  The key is not =TAB=,
-because =TAB= moves to the next button, and evil leaves =C-c= alone,
-so the fold needs no evil binding of its own.
+The buffer is a tree of =magit-section= sections, so the Magit keys
+work: =TAB= folds the section around point, =C-c TAB= cycles the fold
+of a section and its children, =S-TAB= cycles every fold, =n= and =p=
+move between sections, =^= goes to the parent and =1= to =4= show that
+many levels.  A refresh keeps the sections that you folded, and the
+section at point is highlighted.  =TAB= on a value button still moves
+to the next button, because a button carries its own key map.
+
+The report itself is the section tree: each heading of the report
+becomes one foldable section and each row one section of its own, so
+there is no second list of sections to configure.
+
+** Section tree
+
+A heading of the buffer is a =net-section= and every row below it is
+a =net-field= section, so a fold hides the rows of one heading and
+point stays on a row after a render.  The tree is visible to any
+package that speaks =magit-section=:
+
+#+begin_src elisp
+(require 'magit-section)
+(magit-map-sections
+ (lambda (section)
+   (when (eq (oref section type) 'net-field)
+     (message "%s" (oref section value)))))
+#+end_src
+
+=magit-section-inhibit-markers= is =t= and
+=magit-section-show-child-count= is nil in every inspect buffer, because
+a render inserts the tree once and never edits it again.
 
 ** RDAP
 
@@ -260,7 +294,7 @@ user-country-ipv6.csv
 #+begin_src sh
 nix build                  # build the package
 nix flake check            # package, ERT suite, package-lint, checkdoc, treefmt
-nix develop                # Emacs with package-lint, embark and evil
+nix develop                # Emacs with package-lint, embark, evil, magit-section
 nix flake update           # refresh every pinned database
 #+end_src
 
@@ -286,9 +320,9 @@ inputs.network-modes.packages.${system}.default.override {
 }
 #+end_src
 
-The builder also takes =emacsPackages=, =melpaBuild=, =evil=, =data=
-and =version=.  An =emacs= override moves the default =emacsPackages=
-and =evil= with it.
+The builder also takes =emacsPackages=, =melpaBuild=,
+=magit-section=, =evil=, =data= and =version=.  An =emacs= override
+moves the default =emacsPackages= with it.
 
 Upstream licences of the pinned data: IANA registries are public data,
 as-metadata is CC0 1.0, ip-location-db user-country is PDDL 1.0,
@@ -331,21 +365,25 @@ They are loaded on request:
 state maps take precedence over a major mode map, so the bindings give
 the commands of =net-mode-map= a state key:
 
-| Key | Command        | Description                      |
-|-----+----------------+----------------------------------|
-| =RET= | =push-button=    | follow a field or address button |
-| =q=   | =quit-window=    | bury the inspect buffer          |
-| =gr=  | =revert-buffer=  | render the value again           |
-| =w=   | =net-copy-value= | copy the inspected value         |
-| =b=   | =net-rdap=       | fetch RDAP data for this value   |
-| =i=   | =net-inspect=    | inspect the address at point     |
+| Key   | Command             | Description                      |
+|-------+---------------------+----------------------------------|
+| =RET=   | =push-button=         | follow a field or address button |
+| =TAB=   | =net-toggle-section=  | fold the nearest section         |
+| =q=     | =quit-window=         | bury the inspect buffer          |
+| =gr=    | =revert-buffer=       | render the value again           |
+| =w=     | =net-copy-value=      | copy the inspected value         |
+| =b=     | =net-rdap=            | fetch RDAP data for this value   |
+| =i=     | =net-inspect=         | inspect the address at point     |
 
 The motions =j=, =k=, =gg=, =G=, =C-d=, =C-u=, =/=, =n= and =N= stay
 evil.  A read-only buffer has nothing to insert or paste, so the
 inspect commands win on =w=, =b= and =i=.  Visual state binds only
-=RET= and keeps its text objects.  Evil keeps =TAB= for its jump
-motion, so the button motion stays on =RET=.  =net-evil-mode= adds and
-removes the keys for every inspect buffer, existing or new.
+=RET= and keeps its text objects.  =net-evil-mode= adds and removes the
+keys for every inspect buffer, existing or new.
+
+The fold keys of evil work too: =zc= closes the section of point, =zo=
+opens it, =za= toggles it, =zO= opens it and its children, =zm= closes
+every fold and =zr= opens every fold.
 
 * Testing
 
@@ -361,14 +399,16 @@ IDN rules), the vendor, registry, metadata and country lookups with
 temporary files, buffer rendering, RDAP placement, bookmarks and the
 integration modules.
 
-The evil tests skip themselves when evil is absent.  Add the evil
-elisp directory to the load path to run them:
+Every file needs =magit-section=, and the evil tests need evil.  Add
+both elisp directories to the load path to run the whole suite:
 
 #+begin_src sh
-emacs -Q --batch -L . -L test -L "$EVIL_DIR" \
+emacs -Q --batch -L . -L test -L "$MAGIT_SECTION_DIR" -L "$EVIL_DIR" \
   $(printf -- "-l %s " test/*-test.el) \
   -f ert-run-tests-batch-and-exit
 #+end_src
+
+The evil tests skip themselves when evil is absent.
 
 One file per source unit lives in =test/= and ends in =-test.el=.
 Shared fixtures live in =test/network-modes-test-helper.el=, which the

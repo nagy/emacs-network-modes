@@ -5,7 +5,7 @@
 ;; Author: Daniel Nagy
 ;; Version: 0.1.0
 ;; Keywords: tools, network
-;; Package-Requires: ((emacs "31.1"))
+;; Package-Requires: ((emacs "31.1") (magit-section "3.0.0"))
 ;; URL: https://github.com/nagy/emacs-network-modes
 
 ;; This file is not part of GNU Emacs.
@@ -31,15 +31,20 @@
 ;; system numbers, domain names and AF_VSOCK addresses.
 ;;
 ;; Every mode derives from `net-mode', which itself derives from
-;; `special-mode'.  `net-mode' supplies the shared machinery:
+;; `magit-section-mode'.  `net-mode' supplies the shared machinery:
 ;;
 ;;   - a buffer naming scheme, one buffer per inspected value
-;;   - a read-only renderer with copyable field buttons
+;;   - a read-only section tree with copyable field buttons
+;;   - folds, section motion and a section index from magit-section
 ;;   - a report summary per value, which names the classification
 ;;   - a bookmark handler per inspected value
 ;;   - a report per value, which draws the buffer and the JSON view
 ;;   - an explicit RDAP lookup command, never automatic
 ;;   - `net-inspect', the dispatcher that sniffs the token at point
+;;
+;; The report plist is the only section list: one heading becomes one
+;; `net-section' and one row becomes one `net-field' section, so a
+;; refresh keeps point and folds by the identity of the row.
 ;;
 ;; Each concrete mode registers itself in `net-kinds' with an opener
 ;; and a sniffer.  `net-inspect' and `net-sniff' use that registry, so
@@ -67,7 +72,7 @@
 (require 'js)
 (require 'json)
 (require 'json-ts-mode nil t)
-(require 'outline)
+(require 'magit-section)
 (require 'seq)
 (require 'subr-x)
 (require 'treesit)
@@ -220,10 +225,17 @@ shows the answer exactly as the server sent it.")
 (defvar-local net--json-source nil
   "Inspect buffer whose report this JSON buffer shows.")
 
-(defvar-local net--headings nil
-  "Section headings of this buffer, newest first.
-Each element is (TITLE . MARKER).  The renderers fill it through
-`net-insert-heading', and Imenu reads it.")
+(defvar-local net--rdap-section nil
+  "Root of the RDAP section tree of this buffer, or nil.
+A second lookup removes that section from the tree before it inserts
+the new one, so `magit-get-section' never finds a stale object.")
+
+(defvar net--label-counts nil
+  "Occurrences of every row label in the section being inserted.
+`net--field-value' reads the hash table to give a repeated label a
+unique section value.  `net--render-section' and the RDAP renderer
+bind it to a fresh table per section, so two rows of different
+sections can carry the same label.")
 
 ;; The JSON view takes its parent from the machine at load time, so its
 ;; `define-derived-mode' sits inside an `if' and the byte compiler
@@ -326,6 +338,25 @@ Return nil when no registered mode recognizes STRING."
 KIND is one of `ip', `cidr', `mac', `asn', `domain' or `vsock'."
   (net--open kind value))
 
+(defun net--field-value (label)
+  "Return the section value of a row labelled LABEL.
+A parent can hold two rows with the same label, for example two RDAP
+events of the same action or two remarks, so the second occurrence
+gains an ordinal.  The first occurrence keeps the bare label, because
+its identity must survive a render that drops the repeat."
+  (let ((text (format "%s" label)))
+    (unless net--label-counts
+      (setq net--label-counts (make-hash-table :test #'equal)))
+    (let ((count (gethash text net--label-counts 0)))
+      (puthash text (1+ count) net--label-counts)
+      (if (zerop count) text (format "%s#%d" text (1+ count))))))
+
+(defmacro net--with-label-counts (&rest body)
+  "Run BODY with a fresh row label counter."
+  (declare (indent 0) (debug t))
+  `(let ((net--label-counts (make-hash-table :test #'equal)))
+     ,@body))
+
 ;;; Display
 
 (defun net--buffer-name (kind value)
@@ -348,12 +379,12 @@ Reuse and refresh the buffer when it already exists."
 (defun net-refresh (&rest _)
   "Render the inspected value again.
 This is the `revert-buffer-function' of every inspect buffer.  Keep
-point on the line that it was on before the render, by the identity
-of that line, keep the line of every other window that shows the
-buffer, and keep the sections that the reader folded."
+point on the section that it was on before the render, keep the line
+of every other window that shows the buffer, and keep the sections
+that the reader folded.  The visibility cache keys on the section
+identity, so it restores a fold by itself."
   (let ((record (net--point-record))
-        (windows (net--window-records))
-        (collapsed (net--collapsed-sections)))
+        (windows (net--window-records)))
     (let ((inhibit-read-only t))
       (erase-buffer)
       (setq net--summary nil
@@ -361,31 +392,115 @@ buffer, and keep the sections that the reader folded."
             net--rdap-type nil
             net--rdap-key nil
             net--rdap-start nil
-            net--rdap-raw nil
-            net--headings nil)
+            net--rdap-section nil
+            net--rdap-raw nil)
       (when net--render-function
-        (funcall net--render-function))
-      (net--restore-sections collapsed)
-      (net--restore-point record)
-      (net--restore-window-points windows))
-    ;; The buffer name carries the value, and a narrow window truncates
-    ;; it, so the mode line names it too.
-    (setq-local mode-line-process
-                (and net--value (list (concat " " net--value))))
-    (set-buffer-modified-p nil)
-    (net--json-redraw)))
+        (magit-insert-section (net-report (or net--kind 'report))
+          (net--with-label-counts
+            (funcall net--render-function))))
+      (set-buffer-modified-p nil))
+    ;; Show the root section with the cache off, so the cache ends up
+    ;; holding only the sections that the reader really folded.  The
+    ;; copy holds the sections that came back hidden from the cache.
+    (when magit-root-section
+      (let ((magit-section-cache-visibility nil))
+        (magit-section-show magit-root-section)))
+    (net--restore-point record)
+    (net--restore-window-points windows))
+  ;; The buffer name carries the value, and a narrow window truncates
+  ;; it, so the mode line names it too.
+  (setq-local mode-line-process
+              (and net--value (list (concat " " net--value))))
+  (set-buffer-modified-p nil)
+  (net--json-redraw))
 
 ;;; Point keeping
 
-;; A render erases the buffer, so a refresh would move point to the
-;; start of the buffer for every line that carries no name.  The
-;; record of a position names the line and not the buffer position:
-;; the label of a field row, the title of a heading or, for a line
-;; without a name, the text of the line and its ordinal among the
-;; equal lines above it.  A remark spans several lines, so a line
-;; without a name leans on the nearest named line above it and keeps
-;; its distance from that line.  The column of point travels with the
-;; line.
+;; A render erases the buffer and inserts a new section tree, so a
+;; refresh keeps point by the identity of the section at point: the
+;; `magit-section-ident' of that section, the number of lines from its
+;; start, and the column of point.  The identity survives the render,
+;; because the report builder gives every row a stable value.  A row
+;; that a new render drops leaves point at `point-min'.
+;;
+;; The record holds no section object, because a bookmark serializes
+;; the record to a file and an EIEIO object does not read back.  The
+;; restore looks the identity up with `magit-get-section' instead.
+
+(defun net--point-record (&optional position)
+  "Return a record of the section at POSITION, or nil.
+POSITION defaults to point.  The record holds the identity of the
+section, the number of lines from its start to the line of POSITION,
+and the column of POSITION.  A line that belongs to no section, such
+as the blank line between two headings, records the root section the
+way `magit-current-section' answers it."
+  (let ((position (or position (point))))
+    (when-let* ((section (or (magit-section-at position)
+                             magit-root-section)))
+      (list :ident (magit-section-ident section)
+            :line (- (line-number-at-pos position)
+                     (line-number-at-pos (oref section start)))
+            :column (- position
+                       (save-excursion
+                         (goto-char position)
+                         (line-beginning-position)))))))
+
+(defun net--record-position (record)
+  "Return the buffer position that RECORD names, or nil.
+The position starts at the section that the identity of RECORD names,
+moves down by the recorded number of lines and keeps the recorded
+column, clipped to the end of a shorter line.  Return nil when the
+new render holds no section with that identity."
+  (when-let* ((record record)
+              (section (magit-get-section (plist-get record :ident))))
+    (save-excursion
+      (goto-char (oref section start))
+      (forward-line (or (plist-get record :line) 0))
+      (let ((column (or (plist-get record :column) 0)))
+        (unless (zerop column)
+          (goto-char (min (+ (line-beginning-position) column)
+                          (line-end-position)))))
+      (point))))
+
+(defun net--restore-point (record)
+  "Move point to the position that RECORD describes.
+A nil RECORD, or a record whose section the render dropped, moves
+point to the start of the buffer."
+  (goto-char (or (net--record-position record) (point-min))))
+
+(defun net--window-records (&optional record-function)
+  "Return the point record of every other window of the buffer.
+Every window but the selected one contributes one cons of the window
+and its record.  The selected window needs no entry, because its
+point is the point of the buffer.  RECORD-FUNCTION takes a position
+and returns a record, and defaults to `net--point-record'."
+  (let ((buffer (current-buffer))
+        (selected (selected-window))
+        (record-function (or record-function #'net--point-record))
+        records)
+    (dolist (window (get-buffer-window-list buffer nil t))
+      (unless (eq window selected)
+        (push (cons window (funcall record-function
+                                    (window-point window)))
+              records)))
+    records))
+
+(defun net--restore-window-points (records &optional position-function)
+  "Move the point of every window of RECORDS to its recorded line.
+A window whose line is gone shows the start of the buffer, and a dead
+window stays alone.  POSITION-FUNCTION takes a record and returns a
+position, and defaults to `net--record-position'."
+  (let ((position-function (or position-function #'net--record-position)))
+    (dolist (record records)
+      (let ((window (car record)))
+        (when (window-live-p window)
+          (set-window-point window
+                            (or (funcall position-function (cdr record))
+                                (point-min))))))))
+
+;; The JSON view carries no sections, so it keeps point by the text of
+;; the line and by the ordinal of that line among the equal lines
+;; above it.
 
 (defun net--line-text ()
   "Return the text of the current line without properties."
@@ -408,55 +523,23 @@ lines."
           (forward-line 1))
         count))))
 
-(defun net--line-identity ()
-  "Return the identity of the line of point, or nil.
-The identity is the `net-line' value of a named row, a cons of a kind
-and a name, or a cons of `text' and a cons of the text of the line and
-its ordinal among the equal lines above it.  A line of whitespace
-alone has no identity, because its text would match every blank line."
-  (or (get-text-property (line-beginning-position) 'net-line)
-      (let ((text (net--line-text)))
-        (unless (string-empty-p text)
-          (cons 'text (cons text (net--line-occurrence text)))))))
-
-(defun net--point-record (&optional position)
-  "Return a record of the line at POSITION, or nil.
-POSITION defaults to point.  The record holds the identity of the
-line, the number of lines from the named line to the line of
-POSITION, and the column of POSITION.  A line without a name leans
-on the nearest named line above it.  Return nil when no line of the
-buffer has a name, because then no place exists to keep."
-  (let ((offset 0)
-        column
-        identity)
-    (save-excursion
-      (goto-char (or position (point)))
-      (setq column (- (point) (line-beginning-position)))
-      (beginning-of-line)
-      (let ((done nil))
-        (while (not done)
-          (setq identity (net--line-identity))
-          (cond (identity (setq done t))
-                ((bobp) (setq done t))
-                (t
-                 (setq offset (1+ offset))
-                 (forward-line -1))))))
-    (when identity
-      (list :identity identity :offset offset :column column))))
-
-(defun net--goto-line (identity)
-  "Move point to the first line whose `net-line' value equals IDENTITY.
-Return non-nil when such a line exists.  Leave point at `point-min'
-when no line holds that name."
-  (let ((found nil))
-    (save-excursion
-      (goto-char (point-min))
-      (while (and (not found) (not (eobp)))
-        (when (equal (get-text-property (point) 'net-line) identity)
-          (setq found (point)))
-        (forward-line 1)))
-    (prog1 (and found t)
-      (goto-char (or found (point-min))))))
+(defun net--text-record (&optional position)
+  "Return a record of the text of the line at POSITION, or nil.
+POSITION defaults to point.  The record holds the text of the line,
+its ordinal among the equal lines above it and the column of
+POSITION.  A line of whitespace alone records nothing, because its
+text would match every blank line."
+  (let* ((position (or position (point)))
+         (text (save-excursion
+                 (goto-char position)
+                 (net--line-text)))
+         (column (- position
+                    (save-excursion
+                      (goto-char position)
+                      (line-beginning-position)))))
+    (unless (string-empty-p text)
+      (list :text text :ordinal (net--line-occurrence text)
+            :column column))))
 
 (defun net--goto-text (line)
   "Move point to the line that LINE names.
@@ -481,61 +564,17 @@ one serves, because a new line can push an old one down."
       (when (or found last)
         (goto-char (or found last))))))
 
-(defun net--goto-identity (identity)
-  "Move point to the line that IDENTITY names.
-Return non-nil when the function found that line."
-  (pcase identity
-    (`(text . ,line) (net--goto-text line))
-    (_ (net--goto-line identity))))
-
-(defun net--record-position (record)
-  "Return the buffer position that RECORD names, or nil.
-The position starts at the line that the identity of RECORD names,
-moves down by the recorded number of lines and keeps the recorded
-column, clipped to the end of a shorter line."
-  (when record
+(defun net--text-record-position (record)
+  "Return the buffer position that RECORD names, or nil."
+  (when-let* ((text (plist-get record :text)))
     (save-excursion
       (goto-char (point-min))
-      (when (net--goto-identity (plist-get record :identity))
-        (forward-line (plist-get record :offset))
-        (let ((column (plist-get record :column)))
+      (when (net--goto-text (cons text (plist-get record :ordinal)))
+        (let ((column (or (plist-get record :column) 0)))
           (unless (zerop column)
             (goto-char (min (+ (line-beginning-position) column)
                             (line-end-position)))))
         (point)))))
-
-(defun net--restore-point (record)
-  "Move point to the position that RECORD describes.
-A nil RECORD moves point to the start of the buffer, because no line
-carried a name before the render."
-  (goto-char (or (net--record-position record) (point-min))))
-
-(defun net--window-records ()
-  "Return the point record of every other window of the buffer.
-Every window but the selected one contributes one cons of the window
-and its record.  The selected window needs no entry, because its
-point is the point of the buffer.  A window whose line has no
-identity contributes a nil record."
-  (let ((buffer (current-buffer))
-        (selected (selected-window))
-        records)
-    (dolist (window (get-buffer-window-list buffer nil t))
-      (unless (eq window selected)
-        (push (cons window (net--point-record (window-point window)))
-              records)))
-    records))
-
-(defun net--restore-window-points (records)
-  "Move the point of every window of RECORDS to its recorded line.
-A window whose line is gone shows the start of the buffer, and a dead
-window stays alone."
-  (dolist (record records)
-    (let ((window (car record)))
-      (when (window-live-p window)
-        (set-window-point window
-                          (or (net--record-position (cdr record))
-                              (point-min)))))))
-
 
 (defun net-set-summary (text)
   "Set the report summary of the current buffer to TEXT.
@@ -546,148 +585,122 @@ that TEXT names, so no header line repeats it."
 
 ;;; Sections
 
-;; A heading line carries `net-heading' with its title, and
-;; `outline-search-function' finds that text property, so no heading
-;; needs a special character in the text.  Every section is a top
-;; level section, and a render restores a fold by the title.
+;; A report becomes a tree of magit sections.  The root section holds
+;; the kind of the buffer, every heading of the report becomes a
+;; `net-section', and every row becomes a `net-field' or
+;; `net-warning' section of its own.  A row has its own section
+;; because point and the fold of a row key on its identity: a new row
+;; above the reader then moves the reader with its row, and not with
+;; its line number.
+;;
+;; The report plist is the only section list.  `net--render-section'
+;; walks `:sections' in display order, so the buffer and the JSON view
+;; cannot drift apart, and a second knob that lists sections would
+;; double the configuration surface for no gain.
 
-(defun net--outline-search (&optional bound move backward looking-at)
-  "Search for the next `net-heading' text property.
-BOUND, MOVE, BACKWARD and LOOKING-AT have the meaning that
-`outline-search-function' documents."
-  (outline-search-text-property 'net-heading nil bound move backward
-                                looking-at))
+(defun net--insert-blank-line ()
+  "Insert a blank line above the section that follows, when needed."
+  (unless (bobp)
+    (insert "\n")))
 
-(defun net--enclosing-heading ()
-  "Return the start of the heading line of the section around point.
-Return nil when point sits above the first heading."
-  (save-excursion
-    (beginning-of-line)
-    (cond
-     ((get-text-property (point) 'net-heading) (point))
-     ((outline-previous-heading) (point)))))
+(defun net--insert-heading-line (title)
+  "Insert TITLE as the heading line of the section being inserted.
+The line carries TITLE in the `net-heading' text property, so
+`embark-net.el' recognizes the heading of point, and it carries the
+`face' property, so `magit-insert-heading' keeps the face of the
+mode and does not substitute its own."
+  (let ((text (format "%s" title)))
+    (magit-insert-heading
+     (propertize text 'face 'net-heading-face 'net-heading text))))
 
-(defun net--keep-final-newline-visible ()
-  "Stop a fold from hiding the newline that ends the buffer.
-`outline-hide-subtree' reaches `point-max' when the folded section
-ends the buffer, and Emacs then drops that line break, so the heading
-of a later RDAP section would draw on the row of the folded one."
-  (let ((end (point-max)))
-    (when (> end (point-min))
-      (dolist (overlay (overlays-in (1- end) end))
-        (when (= (overlay-end overlay) end)
-          (move-overlay overlay (overlay-start overlay) (1- end)))))))
+(defun net--foldable-section (section)
+  "Return SECTION or the nearest ancestor that carries a body."
+  (when section
+    (if (magit-section-content-p section)
+        section
+      (net--foldable-section (oref section parent)))))
 
-(defun net-toggle-section ()
-  "Fold or unfold the network section around point.
-The command works on every line of a section, not only on the line
-that shows its heading, so a reader folds a long field table, an RDAP
-entity list or a remark body from the middle of it."
+(defun net--section-by-heading (title)
+  "Return the heading section titled TITLE, or nil."
+  (let (found)
+    (when magit-root-section
+      (magit-map-sections
+       (lambda (section)
+         (when (and (not found)
+                    (eq (oref section type) 'net-section)
+                    (equal (oref section value) title))
+           (setq found section)))))
+    found))
+
+(defun net-toggle-section (&optional section)
+  "Fold or unfold SECTION, or the nearest foldable section above point.
+A row that carries no body folds the heading section that holds it,
+so a reader folds a long field table, an RDAP entity list or a remark
+body from any line of it."
   (interactive nil net-mode)
-  (let ((heading (net--enclosing-heading)))
-    (unless heading
-      (user-error "No network section at point"))
-    (save-excursion
-      (goto-char heading)
-      (outline-toggle-children))
-    (net--keep-final-newline-visible)))
-
-(defun net--heading-position (title)
-  "Return the start of the heading line titled TITLE, or nil."
-  (save-excursion
-    (when (net--goto-line (cons 'heading title))
-      (point))))
-
-(defun net--hide-section (title)
-  "Fold the section titled TITLE in the current buffer, when present."
-  (when-let* ((position (net--heading-position title)))
-    (save-excursion
-      (goto-char position)
-      (outline-hide-subtree)
-      (net--keep-final-newline-visible))))
-
-(defun net--collapsed-sections ()
-  "Return the titles of the folded sections of the current buffer.
-`net-refresh' reads this before it erases the buffer, so a refresh
-keeps the fold of the reader."
-  (when (bound-and-true-p outline-minor-mode)
-    (let (titles)
-      (dolist (heading net--headings)
-        (when (and (marker-position (cdr heading))
-                   (save-excursion
-                     (goto-char (cdr heading))
-                     (outline-invisible-p (line-end-position))))
-          (push (car heading) titles)))
-      (nreverse titles))))
-
-(defun net--restore-sections (titles)
-  "Fold the sections of TITLES in the current buffer."
-  (dolist (title titles)
-    (net--hide-section title)))
+  (let ((section (net--foldable-section (or section (magit-section-at)))))
+    (unless section
+      (user-error "No foldable network section at point"))
+    (magit-section-toggle section)))
 
 ;;; Rendering helpers
 
-(defun net-insert-heading (title)
-  "Insert TITLE as a section heading.
-Record the heading for Imenu.  The line carries TITLE in the
-`net-heading' text property, so the outline search of `net-mode'
-finds it and a render restores a fold by name."
-  (unless (bobp)
-    (insert "\n"))
-  (let ((start (point)))
-    (insert (propertize title 'face 'net-heading-face
-                        'net-heading title
-                        'net-line (cons 'heading title))
-            "\n")
-    (push (cons title (copy-marker start)) net--headings)))
-
 (defun net--imenu-index ()
-  "Return the section headings of the current buffer for Imenu."
-  (mapcar (lambda (entry) (cons (car entry) (cdr entry)))
-          (reverse net--headings)))
+  "Return the heading sections of the current buffer for Imenu.
+`magit-map-sections' visits depth first and ends with the root, so the
+index takes the positions from the section objects and sorts them
+into buffer order.  A row stays out of the index, because the index
+would otherwise list every field of the report."
+  (let (index)
+    (when magit-root-section
+      (magit-map-sections
+       (lambda (section)
+         (when (eq (oref section type) 'net-section)
+           (push (cons (format "%s" (oref section value))
+                       (oref section start))
+                 index)))))
+    (sort index (lambda (a b) (< (cdr a) (cdr b))))))
 
 (defun net--insert-label (label)
   "Insert LABEL in the label column.
-The column holds at least one space after a long LABEL.  A label
-names its row in the `net-line' text property, so a refresh keeps
-point on the row."
+The column holds at least one space after a long LABEL."
   (let* ((text (format "%s" label))
          (padded (concat text
                          (make-string (max 1 (- net--field-width
                                                 (length text)))
                                       ?\s))))
-    (insert (if (string-empty-p text)
-                (propertize padded 'face 'net-field-face)
-              (propertize padded 'face 'net-field-face
-                          'net-line (cons 'field text))))))
+    (insert (propertize padded 'face 'net-field-face))))
 
 (defun net-insert-field (label value &optional face)
-  "Insert LABEL and VALUE as a copyable field.
+  "Insert LABEL and VALUE as a copyable field section.
 VALUE is turned into a button that copies it to the kill ring.  FACE
 replaces `net-value-face' for the button text.  A nil VALUE shows
-\"unknown\"."
-  (net--insert-label label)
-  (if (null value)
-      (insert (propertize "unknown" 'face 'net-muted-face))
-    (let ((text (format "%s" value)))
-      (insert-text-button text
-                          'net-value text
-                          'face (or face 'net-value-face)
-                          'follow-link t
-                          'action #'net--copy-button
-                          'help-echo "Copy this value")))
-  (insert "\n"))
+\"unknown\".  The row carries LABEL as its section value, so a
+refresh keeps point on it."
+  (magit-insert-section (net-field (net--field-value label))
+    (net--insert-label label)
+    (if (null value)
+        (insert (propertize "unknown" 'face 'net-muted-face))
+      (let ((text (format "%s" value)))
+        (insert-text-button text
+                            'net-value text
+                            'face (or face 'net-value-face)
+                            'follow-link t
+                            'action #'net--copy-button
+                            'help-echo "Copy this value")))
+    (insert "\n")))
 
 (defun net-insert-text (label text &optional plain)
-  "Insert LABEL followed by TEXT without a button.
+  "Insert LABEL followed by TEXT as a plain text section.
 TEXT can span several lines.  A network address inside TEXT becomes a
 button that opens its own inspect buffer, unless PLAIN is non-nil,
 which a row that names a file passes, because a file name can read as
 a domain name."
-  (net--insert-label label)
-  (let ((start (point)))
-    (insert (propertize (format "%s" text) 'face 'net-muted-face))
-    (net--link-addresses start (point) plain)
+  (magit-insert-section (net-field (net--field-value label))
+    (net--insert-label label)
+    (let ((start (point)))
+      (insert (propertize (format "%s" text) 'face 'net-muted-face))
+      (net--link-addresses start (point) plain))
     (insert "\n")))
 
 (defun net-insert-file (label text file)
@@ -695,15 +708,16 @@ a domain name."
 TEXT stays a short name, so the buffer never prints a store path.  The
 path lives in the `net-file' text property, where `ffap-file-at-point'
 and Embark find it, and in the button that `RET' pushes."
-  (net--insert-label label)
-  (insert-text-button (format "%s" text)
-                      'net-file file
-                      'face 'net-muted-face
-                      'follow-link t
-                      'action #'net--open-file-button
-                      'help-echo (format "Open %s"
-                                         (file-name-nondirectory file)))
-  (insert "\n"))
+  (magit-insert-section (net-field (net--field-value label))
+    (net--insert-label label)
+    (insert-text-button (format "%s" text)
+                        'net-file file
+                        'face 'net-muted-face
+                        'follow-link t
+                        'action #'net--open-file-button
+                        'help-echo (format "Open %s"
+                                           (file-name-nondirectory file)))
+    (insert "\n")))
 
 (defun net--insert-link-button (kind value)
   "Insert a button that opens the KIND address VALUE."
@@ -766,29 +780,31 @@ it never touches the text of a row."
 
 (defun net-insert-link (label kind value)
   "Insert a button labelled LABEL that opens the KIND address VALUE."
-  (net--insert-label label)
-  (net--insert-link-button kind value)
-  (insert "\n"))
+  (magit-insert-section (net-field (net--field-value label))
+    (net--insert-label label)
+    (net--insert-link-button kind value)
+    (insert "\n")))
 
 (defun net-insert-link-list (label items)
   "Insert LABEL and a comma separated list of address buttons.
 ITEMS is a list of (KIND . VALUE) pairs.  The list wraps at the
 window edge instead of putting one button on each line."
-  (net--insert-label label)
-  (let ((first t))
-    (dolist (item items)
-      (unless first
-        (insert ", "))
-      (setq first nil)
-      (net--insert-link-button (car item) (cdr item))))
-  (insert "\n"))
+  (magit-insert-section (net-field (net--field-value label))
+    (net--insert-label label)
+    (let ((first t))
+      (dolist (item items)
+        (unless first
+          (insert ", "))
+        (setq first nil)
+        (net--insert-link-button (car item) (cdr item))))
+    (insert "\n")))
 
 (defun net-insert-warning (text)
-  "Insert TEXT as a warning line.
-The line carries its own text as its `net-line' name."
-  (let ((line (format "%s\n" text)))
-    (insert (propertize line 'face 'net-warning-face
-                        'net-line (cons 'warning line)))))
+  "Insert TEXT as a warning section.
+The row carries TEXT as its section value, so a refresh keeps point
+on it."
+  (magit-insert-section (net-warning (net--field-value text))
+    (insert (propertize (format "%s\n" text) 'face 'net-warning-face))))
 
 ;;; Reports
 
@@ -852,13 +868,24 @@ without the buffer printing the path."
      (net-insert-warning (net--item-value (nth 1 item) source)))))
 
 (defun net--render-section (section)
-  "Render one report SECTION.
+  "Render one report SECTION as a magit section.
 A section holds `:items' and one object of values, or `:records'
 with one object of values per row.  A records section can also hold
 `:items', which it renders after the rows; those items belong to the
-buffer only and never reach the JSON."
-  (when-let* ((heading (plist-get section :heading)))
-    (net-insert-heading heading))
+buffer only and never reach the JSON.  The heading of the section
+names it across renders, so a fold and point survive a refresh."
+  (let ((heading (plist-get section :heading)))
+    (net--insert-blank-line)
+    (if heading
+        (magit-insert-section (net-section (format "%s" heading))
+          (net--insert-heading-line heading)
+          (net--with-label-counts
+            (net--render-section-rows section)))
+      (net--with-label-counts
+        (net--render-section-rows section)))))
+
+(defun net--render-section-rows (section)
+  "Insert the rows of SECTION into the section being inserted."
   (if-let* ((records (plist-get section :records)))
       (dolist (record records)
         (dolist (item (plist-get record :items))
@@ -1002,15 +1029,15 @@ response, or nil."
 Keep point on the line that it was on before the render, and keep
 the line of every other window that shows the buffer."
   (let ((inhibit-read-only t)
-        (record (net--point-record))
-        (windows (net--window-records))
+        (record (net--text-record))
+        (windows (net--window-records #'net--text-record))
         (text (net--json-text source)))
     (erase-buffer)
     (when text
       (insert text)
       (json-pretty-print-buffer))
-    (net--restore-point record)
-    (net--restore-window-points windows)))
+    (goto-char (or (net--text-record-position record) (point-min)))
+    (net--restore-window-points windows #'net--text-record-position)))
 
 (defun net--json-redraw ()
   "Redraw the JSON view of the current inspect buffer."
@@ -1485,29 +1512,56 @@ TARGET is the inspect buffer, which the caller must keep."
              (not (eq response-buffer target)))
     (url-mark-buffer-as-dead response-buffer)))
 
+(defun net--rdap-remove-section ()
+  "Remove the RDAP section tree and its text from the buffer.
+The answer arrives after the report render, so the tree must forget
+the old section objects before it inserts new ones: `magit-get-section'
+would otherwise find a stale object for the same identity."
+  (when (and net--rdap-section magit-root-section
+             (memq net--rdap-section (oref magit-root-section children)))
+    (oset magit-root-section children
+          (delq net--rdap-section (oref magit-root-section children))))
+  (setq net--rdap-section nil)
+  (when (and net--rdap-start (marker-position net--rdap-start))
+    (let ((inhibit-read-only t))
+      (delete-region net--rdap-start (point-max)))))
+
 (defun net--rdap-begin-section ()
   "Start a new RDAP section at the end of the buffer.
-Delete an earlier section first.  Return the marker at its start."
-  (let ((inhibit-read-only t))
-    (when (and net--rdap-start (marker-position net--rdap-start))
-      (delete-region net--rdap-start (point-max)))
-    (goto-char (point-max))
-    (setq net--rdap-start (copy-marker (point-max)))
-    (net-insert-heading "RDAP")
-    net--rdap-start))
+Delete an earlier section first.  Return the marker at its start,
+which also covers the blank line above the heading, so a second
+answer cannot leave an empty line behind."
+  (net--rdap-remove-section)
+  (goto-char (point-max))
+  (setq net--rdap-start (copy-marker (point-max)))
+  (insert "\n")
+  net--rdap-start)
 
 (defun net--rdap-draw-section (body)
   "Draw the RDAP section with BODY in the current buffer.
 BODY inserts the rows of the section.  The Source row follows them.
 An answer arrives asynchronously, so the section keeps the line of
 point: the reader who waits for an answer keeps the line that the
-reader watched, and the line of every other window follows."
+reader watched, and the line of every other window follows.
+
+A render never edits the report again, so it records positions as
+plain integers.  This function is the one exception: it appends text
+after every report section, so the integers of the earlier sections
+keep their value."
   (let ((inhibit-read-only t)
         (record (net--point-record))
         (windows (net--window-records)))
     (net--rdap-begin-section)
-    (funcall body)
-    (net-insert-field "Source" (net--rdap-url))
+    (let ((magit-insert-section--parent magit-root-section)
+          (magit-insert-section--oldroot nil))
+      (setq net--rdap-section
+            (net--with-label-counts
+              (magit-insert-section (net-section "RDAP")
+                (net--insert-heading-line "RDAP")
+                (funcall body)
+                (net-insert-field "Source" (net--rdap-url))))))
+    (when (and net--rdap-section (oref net--rdap-section hidden))
+      (magit-section-hide net--rdap-section))
     (net--restore-point record)
     (net--restore-window-points windows)))
 
@@ -1603,6 +1657,26 @@ STATUS is the `url-retrieve' status plist."
   (dolist (line (alist-get 'description data))
     (net-insert-text "" line)))
 
+(defun net--rdap-subsection (heading body)
+  "Insert the RDAP HEADING section inside the RDAP section and run BODY.
+The section nests under the RDAP section of the buffer, so a fold of
+the RDAP section hides every subsection with it."
+  (insert "\n")
+  (net--with-label-counts
+    (magit-insert-section (net-section heading)
+      (net--insert-heading-line heading)
+      (funcall body))))
+
+(defun net--fill-text (text &optional width)
+  "Return TEXT filled to WIDTH columns.
+The buffer truncates a long line, so an RDAP remark wraps at WIDTH,
+which defaults to 78, before the renderer inserts it."
+  (with-temp-buffer
+    (let ((fill-column (or width 78)))
+      (insert text)
+      (fill-region (point-min) (point-max))
+      (string-trim-right (buffer-string)))))
+
 (defun net--rdap-render (data)
   "Render the RDAP response alist DATA in the current buffer."
   (cond
@@ -1632,56 +1706,68 @@ STATUS is the `url-retrieve' status plist."
             (net-insert-field (capitalize action) date)))))
     (let ((entities (alist-get 'entities data)))
       (when entities
-        (net-insert-heading "RDAP Entities")
-        (dolist (entity entities)
-          (let ((roles (mapconcat #'identity (alist-get 'roles entity) ", ")))
-            (net-insert-field (if (string-empty-p roles) "Entity" roles)
-                              (net--rdap-entity-name entity))))))
+        (net--rdap-subsection
+         "RDAP Entities"
+         (lambda ()
+           (dolist (entity entities)
+             (let ((roles (mapconcat #'identity
+                                     (alist-get 'roles entity) ", ")))
+               (net-insert-field (if (string-empty-p roles) "Entity" roles)
+                                 (net--rdap-entity-name entity))))))))
     (let ((remarks (alist-get 'remarks data)))
       (when remarks
-        (net-insert-heading "RDAP Remarks")
-        (dolist (remark remarks)
-          (dolist (line (alist-get 'description remark))
-            (when (stringp line)
-              (let ((start (point))
-                    (fill-column 78))
-                (net-insert-text "" line)
-                (fill-region start (point)))))))))))
+        (net--rdap-subsection
+         "RDAP Remarks"
+         (lambda ()
+           (dolist (remark remarks)
+             (dolist (line (alist-get 'description remark))
+               (when (stringp line)
+                 (net-insert-text "" (net--fill-text line))))))))))))
 
 ;;; Base mode
 
 (defvar-keymap net-mode-map
-  :doc "Keymap for `net-mode' and its derived modes."
-  :parent special-mode-map
+  :doc "Keymap for `net-mode' and its derived modes.
+`magit-section-mode-map' supplies `C-c TAB', `n', `p', `^', `M-n',
+`M-p' and the visibility levels.  `TAB' folds the nearest section
+that carries a body, so a reader folds a table from any of its rows.
+A button carries its own `keymap' text property, so `TAB' on a value
+moves to the next button and `RET' follows it."
   "RET" #'push-button
-  "TAB" #'forward-button
-  "<backtab>" #'backward-button
-  "C-c TAB" #'net-toggle-section
+  "TAB" #'net-toggle-section
   "w" #'net-copy-value
   "b" #'net-rdap
   "J" #'net-json-view
   "i" #'net-inspect)
 
-(define-derived-mode net-mode special-mode "Net"
+(define-derived-mode net-mode magit-section-mode "Net"
   "Base major mode for inspecting a network address.
 A derived mode sets `net--render-function' to a function that calls
 `net--render-report' with its `net-KIND-report' value, and
 `net-json-view' shows that report as JSON.
 
+The parent mode supplies the section tree: `TAB' folds the section of
+point, `C-c TAB' cycles the fold of a section and its children, `n'
+and `p' move between sections, `^' goes to the parent and `1' to `4'
+show that many levels.
+
 \\{net-mode-map}"
   :group 'net
-  (setq-local truncate-lines t)
   (setq-local revert-buffer-function #'net-refresh)
   (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
-  ;; A heading line carries `net-heading' with its title, so the
-  ;; outline search finds it and no heading needs a special character.
-  ;; Every section is a top level section.  The faces of the renderer
-  ;; stay, because the heading already carries `net-heading-face'.
-  (setq-local outline-search-function #'net--outline-search)
-  (setq-local outline-level (lambda () 1))
-  (setq-local outline-minor-mode-highlight nil)
-  (outline-minor-mode 1)
+  ;; A render inserts every section once and never edits the report
+  ;; again, so a position stays valid as a plain integer: markers cost
+  ;; a superlinear render above a few thousand sections.  A child
+  ;; count would rewrite the heading of a section after its children
+  ;; recorded their positions, which shifts every later position of
+  ;; the tree, so the renderer writes a count into the heading itself
+  ;; when the number carries information.
+  (setq-local magit-section-inhibit-markers t)
+  (setq-local magit-section-show-child-count nil)
+  ;; The parent mode takes `list-buffers-directory' from
+  ;; `default-directory', which a render then points elsewhere.
+  (setq-local list-buffers-directory nil)
   (net--init-text-links)
   ;; A database row holds a short name, so `ffap' learns the real path
   ;; from the `net-file' text property.  The key matches every name,

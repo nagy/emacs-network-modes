@@ -39,14 +39,35 @@
 ;; inspect command.  The bindings below put those commands back.  A
 ;; read-only buffer has nothing to insert, paste or change, so the
 ;; inspect commands win on those keys.
+;;
+;; `evil-fold-list' carries an entry for `outline-minor-mode' and none
+;; for a Magit section buffer, so a network inspect buffer gets its
+;; own.  Evil matches a symbol in the mode list with `eq' against
+;; `major-mode', so the entry names `net-evil-local-mode': its value
+;; says whether this layer owns the buffer, while a derived mode name
+;; would not match.  Evil calls a fold action with no argument, while
+;; the magit-section commands take the section, so every action wraps
+;; its command in a lambda.  Evil demotes an error of a handler, so an
+;; arity error would otherwise read as a silent no-op.
 
 ;;; Code:
 
 (require 'evil)
 (require 'net-mode)
 
+(declare-function magit-section-at "magit-section" (&optional position))
+(declare-function magit-section-hide "magit-section" (section))
+(declare-function magit-section-show "magit-section" (section))
+(declare-function magit-section-show-children "magit-section"
+                  (section &optional depth))
+(declare-function magit-section-show-level-1-all "magit-section" ())
+
+(defvar evil-fold-list)
+(defvar magit-root-section)
+
 (defvar net-evil-keys
   '(("RET" . push-button)
+    ("TAB" . net-toggle-section)
     ("q" . quit-window)
     ("gr" . revert-buffer)
     ("w" . net-copy-value)
@@ -79,6 +100,21 @@ Enable `net-evil-mode' instead of this mode."
 
 (net-evil--bind 'normal net-evil-keys)
 (net-evil--bind 'visual net-evil-visual-keys)
+
+(defun net-evil--section ()
+  "Return the foldable section at point, or the root section."
+  (or (net--foldable-section (magit-section-at)) magit-root-section))
+
+(add-to-list
+ 'evil-fold-list
+ `((net-evil-local-mode)
+   :open-all   (lambda () (magit-section-show magit-root-section))
+   :close-all  magit-section-show-level-1-all
+   :toggle     (lambda () (net-toggle-section))
+   :open       (lambda () (magit-section-show (net-evil--section)))
+   :open-rec   (lambda () (magit-section-show-children
+                           (net-evil--section)))
+   :close      (lambda () (magit-section-hide (net-evil--section)))))
 
 (defun net-evil--enable-buffer ()
   "Turn on `net-evil-local-mode' in a network inspect buffer."

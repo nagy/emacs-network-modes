@@ -120,5 +120,21 @@ lists of (START END NUMBERS TEXTS).  This mirrors
   "Return the integer of ADDRESS."
   (plist-get (net-ip-parse address) :value))
 
+(defun net-test--section (type value)
+  "Return the section of TYPE with VALUE, or nil."
+  (let (found)
+    (magit-map-sections
+     (lambda (section)
+       (when (and (eq (oref section type) type)
+                  (equal (oref section value) value))
+         (setq found section))))
+    found))
+
+(defun net-test--folded-p (title)
+  "Return non-nil when the heading section TITLE is folded."
+  (let ((section (net-test--section 'net-section title)))
+    (should section)
+    (oref section hidden)))
+
 (provide 'network-modes-test-helper)
 ;;; network-modes-test-helper.el ends here

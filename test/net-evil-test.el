@@ -31,8 +31,7 @@
 ;;; Code:
 
 (require 'ert)
-(require 'net-ip)
-(require 'net-mode)
+(require 'network-modes-test-helper)
 
 (declare-function evil-local-mode "evil" (&optional arg))
 (declare-function evil-normal-state "evil" nil)
@@ -46,8 +45,12 @@
 (declare-function evil-search-next "evil" (&optional count))
 (declare-function evil-search-previous "evil" (&optional count))
 (declare-function evil-forward-word-begin "evil" (&optional count))
+(declare-function evil-close-fold "evil" nil)
+(declare-function evil-open-fold "evil" nil)
+(declare-function evil-toggle-fold "evil" nil)
 (declare-function net-evil-mode "net-evil" (&optional arg))
 (declare-function net-evil-local-mode "net-evil" (&optional arg))
+(defvar evil-fold-list)
 (defvar net-evil-keys)
 (defvar net-evil-visual-keys)
 
@@ -117,6 +120,34 @@
           (call-interactively (key-binding (kbd "RET")))
           (should (equal (car kill-ring) "192.0.2.1")))
       (net-evil-mode -1))))
+
+;;; Folds
+
+(ert-deftest net-evil-test-fold-list ()
+  "The fold list carries an entry that reaches an inspect buffer."
+  (skip-unless (require 'evil nil t))
+  (require 'net-evil)
+  (should (assoc '(net-evil-local-mode) evil-fold-list)))
+
+(ert-deftest net-evil-test-folds ()
+  "The evil fold commands change the visibility of a section."
+  (skip-unless (require 'evil nil t))
+  (require 'net-evil)
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net-evil-mode 1)
+          (net-evil-test--normal)
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (evil-close-fold)
+          (should (net-test--folded-p "Classification"))
+          (evil-open-fold)
+          (should-not (net-test--folded-p "Classification"))
+          (evil-toggle-fold)
+          (should (net-test--folded-p "Classification")))
+      (net-evil-mode -1)
+      (kill-buffer buffer))))
 
 ;;; Global mode
 

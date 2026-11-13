@@ -130,7 +130,12 @@
             pkgs.runCommand "network-modes-data"
               {
                 meta.description = "Pinned network databases for the Emacs network modes";
-                nativeBuildInputs = [ pkgs.emacs-nox ];
+                # The packer loads `net-mode.el', which now needs
+                # magit-section for its section tree, so the build Emacs
+                # carries that library.
+                nativeBuildInputs = [
+                  (pkgs.emacs-nox.pkgs.emacsWithPackages (p: [ p.magit-section ]))
+                ];
               }
               ''
                 mkdir -p $out
@@ -207,18 +212,39 @@
               emacsPackages ? emacs.pkgs,
               melpaBuild ? emacsPackages.melpaBuild,
               version ? "0.1.0",
+              # The section tree of every inspect buffer comes from
+              # magit-section, which the package declares and therefore
+              # propagates to its users.
+              magit-section ? emacsPackages.magit-section,
               # Evil reaches the build Emacs only.  net-evil.el needs the
               # library to byte-compile, and the ERT suite tests its key
               # bindings, so the build cannot drop it.  The package
               # metadata still names no dependency.
-              evil ? emacs.pkgs.evil,
+              evil ? emacsPackages.evil,
               data ? networkModesData,
             }:
+            let
+              # `melpaBuild' keeps `packageRequires' off the load path of
+              # its own build, so the build, the install and the check
+              # phases run the wrapped Emacs that carries both
+              # libraries.
+              emacsWithDeps = emacsPackages.emacsWithPackages (_: [
+                magit-section
+                evil
+              ]);
+              withDepsPath = ''
+                export PATH="${emacsWithDeps}/bin:$PATH"
+              '';
+            in
             melpaBuild {
               pname = "network-modes";
               inherit version;
 
               src = lib.cleanSource ./.;
+
+              # The library reaches the user through the package set, so
+              # a downstream Emacs finds it without a separate install.
+              packageRequires = [ magit-section ];
 
               # One substitution replaces every database option with a
               # single stable prefix, so the Elisp defaults stay readable
@@ -232,27 +258,20 @@
               # Warnings become errors: the cheapest lint the package gets.
               turnCompilationWarningToError = true;
 
-              # The default installPhase compiles the packaged files with
-              # `-Q', so preInstall puts the evil elisp directory on
-              # EMACSLOADPATH for that compile.  Do not add evil to
-              # packageRequires: the dependency is optional for users of
-              # the package.
-              preInstall = ''
-                evil_dir=$(find ${evil}/share/emacs/site-lisp/elpa \
-                  -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
-                export EMACSLOADPATH="$evil_dir:''${EMACSLOADPATH-}"
-              '';
+              # The build compiles with the wrapped Emacs, so the
+              # libraries that `packageRequires' names and the optional
+              # evil layer resolve without an `EMACSLOADPATH' export.
+              preBuild = withDepsPath;
+              preInstall = withDepsPath;
 
-              # The ERT suite needs no external Elisp dependencies except
-              # evil, which net-evil-test.el skips without.  The check
-              # phase supplies the evil elisp directory, so the optional
-              # layer is compiled and tested while the package stays free
-              # of the dependency.
+              # The ERT suite needs magit-section and, for
+              # net-evil-test.el, evil on the load path; the wrapped
+              # Emacs carries both, so the package stays free of the
+              # optional evil dependency.
               doCheck = true;
               checkPhase = ''
                 runHook preCheck
-                evil_load_path=$(find ${evil}/share/emacs/site-lisp/elpa \
-                  -mindepth 1 -maxdepth 1 -type d -name 'evil-*' -print -quit)
+                ${withDepsPath}
                 # melpaBuild stages root *.el files only, so the test tree
                 # comes back from the store before the glob can see it.
                 cp -r ${./test} ./test
@@ -271,9 +290,9 @@
                 # so the suite runs twice: without the JSON grammar,
                 # which serves the view through js-json-mode, and with
                 # it, which serves the view through json-ts-mode.
-                emacs --batch -L . -L test -L "$evil_load_path" \
+                emacs --batch -L . -L test \
                   $test_args -f ert-run-tests-batch-and-exit
-                emacs --batch -L . -L test -L "$evil_load_path" \
+                emacs --batch -L . -L test \
                   --eval '(setq treesit-extra-load-path (list "${jsonGrammar}"))' \
                   $test_args -f ert-run-tests-batch-and-exit
                 runHook postCheck
@@ -345,7 +364,9 @@
             pkgs.runCommandLocal "network-modes-data-tables"
               {
                 nativeBuildInputs = [
-                  pkgs.emacs
+                  # The readers load `net-mode.el', which needs the
+                  # section library to draw a buffer.
+                  (pkgs.emacs.pkgs.emacsWithPackages (p: [ p.magit-section ]))
                   # Emacs writes `~/.emacs.d' and tramp caches, so the
                   # builder needs a writable home.  The hook gives each
                   # derivation a private one, so two checks never leak
@@ -378,7 +399,12 @@
             pkgs.runCommandLocal "network-modes-package-lint"
               {
                 nativeBuildInputs = [
-                  (pkgs.emacsPackages.emacsWithPackages (p: [ p.package-lint ]))
+                  (pkgs.emacsPackages.emacsWithPackages (p: [
+                    p.package-lint
+                    # package-lint accepts a declared dependency only
+                    # when it can see the library installed.
+                    p.magit-section
+                  ]))
                   # Private writable home for Emacs, so no check shares
                   # `~/.emacs.d' with another one.
                   pkgs.writableTmpDirAsHomeHook
@@ -428,12 +454,14 @@
               '';
 
           devShells.default = pkgs.mkShell {
-            # Evil comes along for the optional net-evil.el layer.
+            # Evil comes along for the optional net-evil.el layer, and
+            # magit-section for the section tree of every buffer.
             packages = [
               (pkgs.emacsPackages.emacsWithPackages (p: [
                 p.package-lint
                 p.embark
                 p.evil
+                p.magit-section
               ]))
               pkgs.nix
               jsonGrammar

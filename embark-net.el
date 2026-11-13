@@ -37,6 +37,9 @@
 ;; lists its directory.  The row prints a short name only, so the
 ;; target reads the path from the `net-file' text property.
 ;;
+;; When point is on a section heading, `TAB' folds or unfolds that
+;; section, the same key that the buffer itself gives it.
+;;
 ;; This module is opt-in:
 ;;
 ;;   (require 'embark-net)
@@ -109,11 +112,10 @@ reader acts on it."
 (defun embark-net-toggle-section (title)
   "Fold or unfold the section titled TITLE."
   (interactive "sSection: ")
-  (unless (net--heading-position title)
-    (user-error "No section titled %s" title))
-  (save-excursion
-    (goto-char (net--heading-position title))
-    (net-toggle-section)))
+  (let ((section (net--section-by-heading title)))
+    (unless section
+      (user-error "No section titled %s" title))
+    (net-toggle-section section)))
 
 (defvar-keymap embark-net-map
   :doc "Keymap for Embark network address actions."

@@ -206,7 +206,8 @@ Opening an address from a project must not put the buffer in it."
           (beginning-of-line)
           (let* ((record (net--bookmark-make-record))
                  (target (alist-get 'target record)))
-            (should (equal (plist-get target :identity) '(field . "Class")))
+            (should (equal (car (plist-get target :ident))
+                           '(net-field . "Class")))
             (kill-buffer buffer)
             (let ((jumped (net--bookmark-jump record)))
               (unwind-protect
@@ -251,17 +252,18 @@ Opening an address from a project must not put the buffer in it."
 (ert-deftest net-mode-test-rdap-render ()
   "The RDAP renderer writes fields into the inspect buffer."
   (with-current-buffer (net-ip-inspect "192.0.2.1")
-    (let ((inhibit-read-only t))
-      (net-insert-heading "RDAP")
-      (net--rdap-render
-       '((handle . "TEST-NET-1")
-         (name . "TEST-NET-1")
-         (status "active")
-         (events . (((eventAction . "registration")
-                     (eventDate . "2010-01-01T00:00:00Z"))))
-         (entities . (((handle . "IANA")
-                       (roles "registrant")
-                       (vcardArray . ("vcard" (("fn" nil "text" "IANA"))))))))))
+    (net--rdap-draw-section
+     (lambda ()
+       (net--rdap-render
+        '((handle . "TEST-NET-1")
+          (name . "TEST-NET-1")
+          (status "active")
+          (events . (((eventAction . "registration")
+                      (eventDate . "2010-01-01T00:00:00Z"))))
+          (entities . (((handle . "IANA")
+                        (roles "registrant")
+                        (vcardArray . ("vcard"
+                                       (("fn" nil "text" "IANA")))))))))))
     (should (string-match-p "TEST-NET-1" (buffer-string)))
     (should (string-match-p "Registration" (buffer-string)))
     (should (string-match-p "IANA" (buffer-string)))))
@@ -339,13 +341,15 @@ the start of the buffer."
     (should net--rdap-start)))
 
 (ert-deftest net-mode-test-imenu-index ()
-  "The rendered headings become an Imenu index."
+  "The section headings become an Imenu index.
+A row owns a section of its own, and the index leaves it out."
   (with-current-buffer (net-ip-inspect "192.0.2.1")
     (let ((index (net--imenu-index)))
       (should (equal (car (car index)) "Address"))
       (should (member "Classification" (mapcar #'car index)))
+      (should-not (member "Class" (mapcar #'car index)))
       (dolist (entry index)
-        (should (markerp (cdr entry)))
+        (should (integerp (cdr entry)))
         (should (string-match-p
                  (regexp-quote (car entry))
                  (buffer-substring (cdr entry) (point-max))))))))
@@ -723,7 +727,9 @@ A machine without the JSON tree-sitter grammar cannot activate
                                   (line-end-position)))
 
 (ert-deftest net-mode-test-point-record-field ()
-  "A named row records its label and not its buffer position."
+  "A row records the identity of its own section.
+Every row owns a section, so a new row above the reader moves the
+reader with its row and not with its line number."
   (let ((buffer (net-ip-inspect "192.0.2.1")))
     (unwind-protect
         (with-current-buffer buffer
@@ -731,48 +737,55 @@ A machine without the JSON tree-sitter grammar cannot activate
           (re-search-forward "^Class ")
           (beginning-of-line)
           (let ((record (net--point-record)))
-            (should (equal (plist-get record :identity) '(field . "Class")))
-            (should (zerop (plist-get record :offset)))
-            (should (integerp (plist-get record :column)))))
+            (should (equal (car (plist-get record :ident))
+                           '(net-field . "Class")))
+            (should (zerop (plist-get record :line)))
+            (should (integerp (plist-get record :column)))
+            (should (equal (plist-get record :ident)
+                           (magit-section-ident
+                            (net-test--section 'net-field "Class"))))))
       (kill-buffer buffer))))
 
 (ert-deftest net-mode-test-point-record-heading ()
-  "A heading row records its title."
+  "A heading records the section that it heads."
   (let ((buffer (net-ip-inspect "192.0.2.1")))
     (unwind-protect
         (with-current-buffer buffer
           (goto-char (point-min))
           (search-forward "Reverse DNS")
           (beginning-of-line)
-          (should (equal (plist-get (net--point-record) :identity)
-                         '(heading . "Reverse DNS"))))
+          (should (equal (car (plist-get (net--point-record) :ident))
+                         '(net-section . "Reverse DNS"))))
       (kill-buffer buffer))))
 
-(ert-deftest net-mode-test-point-record-text ()
-  "A line without a name records its text and its ordinal."
+(ert-deftest net-mode-test-text-record ()
+  "The JSON view records the text of a line and its ordinal."
   (with-temp-buffer
     (insert "one\nsame\nsame\nsame\n")
     (goto-char (point-min))
     (forward-line 2)
-    (should (equal (plist-get (net--point-record) :identity)
-                   '(text . ("same" . 1))))
+    (let ((record (net--text-record)))
+      (should (equal (plist-get record :text) "same"))
+      (should (= (plist-get record :ordinal) 1)))
     (net--goto-text '("same" . 2))
     (should (equal (net-test--line-text) "same"))
     (should (= 4 (line-number-at-pos)))))
 
 (ert-deftest net-mode-test-point-record-blank-line ()
-  "A blank line leans on the named line above it."
+  "A blank line between two sections records the root section.
+The blank line belongs to no heading, so the renderer writes it into
+the parent body."
   (let ((buffer (net-ip-inspect "192.0.2.1")))
     (unwind-protect
         (with-current-buffer buffer
           (goto-char (point-min))
-          (re-search-forward "^Name ")
-          (beginning-of-line)
-          (forward-line 1)
+          (re-search-forward "^Classification")
+          (forward-line -1)
           (should (looking-at-p "^$"))
           (let ((record (net--point-record)))
-            (should (equal (plist-get record :identity) '(field . "Name")))
-            (should (= 1 (plist-get record :offset)))))
+            (should (equal (plist-get record :ident)
+                           (magit-section-ident magit-root-section)))
+            (should (integerp (plist-get record :line)))))
       (kill-buffer buffer))))
 
 (ert-deftest net-mode-test-refresh-keeps-point ()
@@ -848,34 +861,59 @@ label of the row keeps the place and not its line number."
           (should-not (string-match-p "TEST-1" (buffer-string))))
       (kill-buffer buffer))))
 
-(defun net-test--heading-invisible-p (title)
-  "Return non-nil when the body of the section TITLE is folded."
-  (save-excursion
-    (goto-char (net--heading-position title))
-    (outline-invisible-p (line-end-position))))
+(ert-deftest net-mode-test-section-tree ()
+  "The report renders one section per heading and one per row.
+The root section carries the kind of the buffer, so two kind buffers
+never share a section identity."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (should (eq (oref magit-root-section type) 'net-report))
+    (should (eq (oref magit-root-section value) 'ip))
+    ;; The tree mirrors the report, whatever databases the build
+    ;; carries: a section that the report holds becomes one section.
+    (should (equal (mapcar (lambda (section) (oref section value))
+                           (oref magit-root-section children))
+                   (delq nil (mapcar (lambda (section)
+                                       (plist-get section :heading))
+                                     (plist-get (net-ip-report "192.0.2.1")
+                                                :sections)))))
+    (let ((section (net-test--section 'net-section "Address")))
+      (should (eq (oref section parent) magit-root-section))
+      (should (equal (mapcar (lambda (child) (oref child value))
+                             (oref section children))
+                     '("Address" "Version" "Integer" "Hex" "Binary")))
+      (let ((row (net-test--section 'net-field "Integer")))
+        (should (eq (oref row parent) section))
+        (should (string-match-p
+                 "^Integer"
+                 (buffer-substring (oref row start)
+                                   (oref row end))))))))
 
 (ert-deftest net-mode-test-section-toggle ()
-  "A toggle folds the section around point and unfolds it again."
+  "A toggle folds the section around point and unfolds it again.
+Point sits on a row of the section, so the command folds the heading
+that holds the row."
   (let ((buffer (net-ip-inspect "192.0.2.1")))
     (unwind-protect
         (with-current-buffer buffer
-          (should outline-minor-mode)
           (goto-char (point-min))
           (re-search-forward "^Class ")
           (net-toggle-section)
-          (should (net-test--heading-invisible-p "Classification"))
-          (should-not (net-test--heading-invisible-p "Reverse DNS"))
+          (should (net-test--folded-p "Classification"))
+          (should-not (net-test--folded-p "Address"))
+          (should (invisible-p (oref (net-test--section
+                                      'net-section "Classification")
+                                     content)))
           (net-toggle-section)
-          (should-not (net-test--heading-invisible-p "Classification")))
+          (should-not (net-test--folded-p "Classification")))
       (kill-buffer buffer))))
 
 (ert-deftest net-mode-test-section-toggle-outside ()
-  "A buffer without a heading refuses to fold."
+  "A buffer without a section refuses to fold."
   (with-temp-buffer
     (insert "plain text\n")
     (net-mode)
     (goto-char (point-min))
-    (should-not (net--enclosing-heading))
+    (should-not (magit-section-at))
     (should-error (net-toggle-section) :type 'user-error)))
 
 (ert-deftest net-mode-test-section-fold-survives-refresh ()
@@ -887,31 +925,59 @@ label of the row keeps the place and not its line number."
           (re-search-forward "^Class ")
           (net-toggle-section)
           (net-refresh)
-          (should (net-test--heading-invisible-p "Classification"))
-          (should-not (net-test--heading-invisible-p "Address")))
+          (should (net-test--folded-p "Classification"))
+          (should-not (net-test--folded-p "Address")))
       (kill-buffer buffer))))
 
-(ert-deftest net-mode-test-section-fold-keeps-final-newline ()
-  "A fold never hides the newline that ends the buffer.
-`outline-hide-subtree' reaches `point-max' when the folded section
-ends the buffer, and Emacs then drops that line break, so a later
-RDAP section would draw on the row of the folded heading."
+(ert-deftest net-mode-test-section-fold-survives-rdap ()
+  "A fold survives the RDAP answer that a lookup appends."
   (let ((buffer (net-ip-inspect "192.0.2.1")))
     (unwind-protect
         (with-current-buffer buffer
           (goto-char (point-min))
           (re-search-forward "^Host prefix")
           (net-toggle-section)
-          (should (net-test--heading-invisible-p "Related"))
-          (let ((end (point-max)))
-            (dolist (overlay (overlays-in (1- end) end))
-              (should (< (overlay-end overlay) end))))
+          (should (net-test--folded-p "Related"))
           (net--rdap-draw-section
            (lambda () (net-insert-field "Handle" "TEST-1")))
-          (should (equal (get-text-property (net--heading-position "RDAP")
-                                            'net-heading)
-                         "RDAP")))
+          (should (net-test--folded-p "Related"))
+          (should (net-test--section 'net-section "RDAP"))
+          (should (net-test--section 'net-field "Handle")))
       (kill-buffer buffer))))
+
+(ert-deftest net-mode-test-refresh-drops-point ()
+  "A row that the new render drops leaves point at the start."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (re-search-forward "^Class ")
+          (beginning-of-line)
+          (setq net--render-function
+                (lambda () (net--render-report '(:sections nil))))
+          (net-refresh)
+          (should (= (point) (point-min)))
+          (should (eq (oref magit-root-section type) 'net-report)))
+      (kill-buffer buffer))))
+
+(ert-deftest net-mode-test-section-keys ()
+  "The mode keeps the section keys and the button keys.
+`TAB' on the label of a row folds its section, `TAB' on a value
+button moves to the next button, and `RET' pushes the button."
+  (with-current-buffer (net-ip-inspect "192.0.2.1")
+    (should (eq (lookup-key net-mode-map (kbd "TAB"))
+                #'net-toggle-section))
+    (should (eq (lookup-key net-mode-map (kbd "C-c TAB"))
+                #'magit-section-cycle))
+    (should (eq (lookup-key net-mode-map (kbd "n"))
+                #'magit-section-forward))
+    (should (eq (lookup-key net-mode-map (kbd "RET")) #'push-button))
+    (goto-char (point-min))
+    (re-search-forward "^Class ")
+    (should (eq (key-binding (kbd "TAB")) #'net-toggle-section))
+    (goto-char (next-button (point-min)))
+    (should (eq (key-binding (kbd "TAB")) #'forward-button))
+    (should (eq (key-binding (kbd "RET")) #'push-button))))
 
 (defun net-test--buttons ()
   "Return the (KIND VALUE) pairs of every button of the buffer."
