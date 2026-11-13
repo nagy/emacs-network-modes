@@ -185,6 +185,18 @@ late answer still replaces that line."
 (defvar-local net--render-function nil
   "Function that renders the inspected value into the current buffer.")
 
+(defvar-local net--report-function nil
+  "Function that returns the report of the inspected value.
+`net-refresh' calls it to compare a fresh report with the report of
+the last render, so a refresh of unchanged data renders nothing.
+The `:report' property of the registered kind supplies it.")
+
+(defvar-local net--rendered nil
+  "Key of the last render of this buffer, or nil.
+The key holds the kind, the value, the render function and the
+report of that render.  `net-refresh' renders only when a fresh key
+differs from this one.")
+
 (defvar-local net--summary nil
   "One-line classification of the inspected value.
 It reaches the JSON view only, because the buffer body shows the same
@@ -244,8 +256,8 @@ sections can carry the same label.")
 
 (defvar net-kinds nil
   "Alist of registered network address kinds.
-Each element is (KIND . PLIST).  PLIST holds :label, :open, :sniff
-and :priority.  Mode files register themselves with
+Each element is (KIND . PLIST).  PLIST holds :label, :open, :report,
+:sniff and :priority.  Mode files register themselves with
 `net-register-kind'.")
 
 (defconst net--kind-features
@@ -293,9 +305,11 @@ with the file name it guessed, which the text property replaces."
 
 (defun net-register-kind (kind plist)
   "Register address KIND with property list PLIST.
-PLIST keys are :label, :open, :sniff and :priority.  :open is called
-with the canonical value string.  :sniff takes a string and returns
-the canonical value string when it recognizes it."
+PLIST keys are :label, :open, :report, :sniff and :priority.  :open
+is called with the canonical value string.  :report takes that
+string and returns the report plist, which `net-refresh' compares
+before it renders.  :sniff takes a string and returns the canonical
+value string when it recognizes it."
   (let ((cell (assq kind net-kinds)))
     (if cell
         (setcdr cell plist)
@@ -371,18 +385,30 @@ Reuse and refresh the buffer when it already exists."
       (funcall mode)
       (setq net--kind kind
             net--value value
-            net--render-function render)
+            net--render-function render
+            net--report-function (net-kind-property kind :report))
       (net-refresh))
     (pop-to-buffer buffer)
     buffer))
 
-(defun net-refresh (&rest _)
-  "Render the inspected value again.
-This is the `revert-buffer-function' of every inspect buffer.  Keep
-point on the section that it was on before the render, keep the line
-of every other window that shows the buffer, and keep the sections
-that the reader folded.  The visibility cache keys on the section
-identity, so it restores a fold by itself."
+(defun net--render-key ()
+  "Return the key that decides whether a render changes the buffer.
+The key holds the kind, the value, the render function and the
+report that the render function would draw, or nil when the buffer
+cannot build one."
+  (when (and net--value net--render-function net--report-function)
+    (list net--kind
+          net--value
+          net--render-function
+          (funcall net--report-function net--value))))
+
+(defun net--render ()
+  "Erase the current buffer and render the inspected value again.
+`net-refresh' calls this after it decides that the buffer needs a
+render.  Keep point on the section that it was on before the render,
+keep the line of every other window that shows the buffer, and keep
+the sections that the reader folded.  The visibility cache keys on
+the section identity, so it restores a fold by itself."
   (let ((record (net--point-record))
         (windows (net--window-records)))
     (let ((inhibit-read-only t))
@@ -406,7 +432,21 @@ identity, so it restores a fold by itself."
       (let ((magit-section-cache-visibility nil))
         (magit-section-show magit-root-section)))
     (net--restore-point record)
-    (net--restore-window-points windows))
+    (net--restore-window-points windows)))
+
+(defun net-refresh (&optional force)
+  "Render the inspected value again unless its report did not change.
+This is the `revert-buffer-function' of every inspect buffer.  A
+render erases the buffer, so it runs only when a fresh report
+differs from the report of the last render: an unchanged value
+keeps its section objects, its folds, its point and its RDAP answer.
+FORCE renders regardless, and `C-u g' passes it."
+  (interactive "P")
+  (let ((key (net--render-key)))
+    (unless (and (not force) key (equal key net--rendered))
+      (net--render)
+      (setq net--rendered (list net--kind net--value
+                                net--render-function net--report))))
   ;; The buffer name carries the value, and a narrow window truncates
   ;; it, so the mode line names it too.
   (setq-local mode-line-process
@@ -608,10 +648,15 @@ that TEXT names, so no header line repeats it."
 The line carries TITLE in the `net-heading' text property, so
 `embark-net.el' recognizes the heading of point, and it carries the
 `face' property, so `magit-insert-heading' keeps the face of the
-mode and does not substitute its own."
+mode and does not substitute its own.  The same face goes into
+`font-lock-face', so a buffer that turns the font-lock alias off
+still shows it."
   (let ((text (format "%s" title)))
     (magit-insert-heading
-     (propertize text 'face 'net-heading-face 'net-heading text))))
+     (propertize text
+                 'face 'net-heading-face
+                 'font-lock-face 'net-heading-face
+                 'net-heading text))))
 
 (defun net--foldable-section (section)
   "Return SECTION or the nearest ancestor that carries a body."
@@ -671,6 +716,15 @@ The column holds at least one space after a long LABEL."
                                       ?\s))))
     (insert (propertize padded 'face 'net-field-face))))
 
+(defvar-keymap net-button-map
+  :doc "Keymap for the buttons of a network inspect buffer.
+It inherits `button-map', so `RET' pushes the button and the mouse
+keys follow it, and it puts `TAB' back on the fold command, because
+the `keymap' property of a button beats the keymap of the major
+mode."
+  :parent button-map
+  "TAB" #'net-toggle-section)
+
 (defun net-insert-field (label value &optional face)
   "Insert LABEL and VALUE as a copyable field section.
 VALUE is turned into a button that copies it to the kill ring.  FACE
@@ -684,6 +738,7 @@ refresh keeps point on it."
       (let ((text (format "%s" value)))
         (insert-text-button text
                             'net-value text
+                            'keymap net-button-map
                             'face (or face 'net-value-face)
                             'follow-link t
                             'action #'net--copy-button
@@ -712,6 +767,7 @@ and Embark find it, and in the button that `RET' pushes."
     (net--insert-label label)
     (insert-text-button (format "%s" text)
                         'net-file file
+                        'keymap net-button-map
                         'face 'net-muted-face
                         'follow-link t
                         'action #'net--open-file-button
@@ -735,6 +791,7 @@ The button opens the inspect buffer of the value."
                                    value
                                  (buffer-substring-no-properties
                                   start end))
+                    'keymap net-button-map
                     'face 'net-value-face
                     'follow-link t
                     'action #'net--open-button
@@ -1108,6 +1165,7 @@ navigation of `json-ts-mode'.
 
 \\{net-json-mode-map}"
       :group 'net
+      :interactive nil
       (net--json-mode-setup))
   (define-derived-mode net-json-mode js-json-mode "Net JSON"
     "Major mode for the JSON view of a network inspect buffer.
@@ -1119,6 +1177,7 @@ no JSON tree-sitter grammar, so the view takes the faces of
 
 \\{net-json-mode-map}"
     :group 'net
+    :interactive nil
     (net--json-mode-setup)))
 
 ;;;###autoload
@@ -1669,8 +1728,9 @@ the RDAP section hides every subsection with it."
 
 (defun net--fill-text (text &optional width)
   "Return TEXT filled to WIDTH columns.
-The buffer truncates a long line, so an RDAP remark wraps at WIDTH,
-which defaults to 78, before the renderer inserts it."
+An RDAP remark arrives as one long line, so it fills at WIDTH,
+which defaults to 78, before the renderer inserts it.  A fill after
+the insert would move the end of the row section."
   (with-temp-buffer
     (let ((fill-column (or width 78)))
       (insert text)
@@ -1731,8 +1791,8 @@ which defaults to 78, before the renderer inserts it."
 `magit-section-mode-map' supplies `C-c TAB', `n', `p', `^', `M-n',
 `M-p' and the visibility levels.  `TAB' folds the nearest section
 that carries a body, so a reader folds a table from any of its rows.
-A button carries its own `keymap' text property, so `TAB' on a value
-moves to the next button and `RET' follows it."
+A button carries `net-button-map', which inherits `button-map' and
+keeps `TAB' on the fold command, so `RET' still follows a button."
   "RET" #'push-button
   "TAB" #'net-toggle-section
   "w" #'net-copy-value
@@ -1753,6 +1813,7 @@ show that many levels.
 
 \\{net-mode-map}"
   :group 'net
+  :interactive nil
   (setq-local revert-buffer-function #'net-refresh)
   (setq-local imenu-create-index-function #'net--imenu-index)
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
@@ -1761,10 +1822,15 @@ show that many levels.
   ;; a superlinear render above a few thousand sections.  A child
   ;; count would rewrite the heading of a section after its children
   ;; recorded their positions, which shifts every later position of
-  ;; the tree, so the renderer writes a count into the heading itself
-  ;; when the number carries information.
+  ;; the tree, so no heading of this buffer ends with a colon and the
+  ;; option of the reader stays at its default.
   (setq-local magit-section-inhibit-markers t)
-  (setq-local magit-section-show-child-count nil)
+  ;; A rendered value can hold a long remark or a list of related
+  ;; addresses, so the buffer wraps at the window edge instead of
+  ;; clipping the tail of a row.  The parent keeps
+  ;; `line-move-visual' for its truncation, which reads wrong here.
+  (setq-local truncate-lines nil)
+  (setq-local line-move-visual nil)
   ;; The parent mode takes `list-buffers-directory' from
   ;; `default-directory', which a render then points elsewhere.
   (setq-local list-buffers-directory nil)

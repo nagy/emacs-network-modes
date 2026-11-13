@@ -740,7 +740,8 @@ identity of the address.  `net--render-report' renders it, and
 
 (define-derived-mode net-ip-mode net-mode "Net IP"
   "Major mode for inspecting one IP address.
-\\{net-mode-map}")
+\\{net-mode-map}"
+  :interactive nil)
 
 ;;;###autoload
 (defun net-ip-inspect (address)
@@ -763,6 +764,7 @@ identity of the address.  `net--render-report' renders it, and
 (net-register-kind 'ip
                    '(:label "IP"
                      :open net-ip-inspect
+                     :report net-ip-report
                      :sniff net-ip--sniff
                      :priority 40))
 

@@ -442,7 +442,8 @@ no RDAP identity, so the report carries none."
 
 (define-derived-mode net-mac-mode net-mode "Net MAC"
   "Major mode for inspecting one MAC address.
-\\{net-mode-map}")
+\\{net-mode-map}"
+  :interactive nil)
 
 ;;;###autoload
 (defun net-mac-inspect (address)
@@ -469,6 +470,7 @@ no RDAP identity, so the report carries none."
 (net-register-kind 'mac
                    '(:label "MAC"
                      :open net-mac-inspect
+                     :report net-mac-report
                      :sniff net-mac--sniff
                      :priority 55))
 

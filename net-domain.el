@@ -447,7 +447,8 @@ identity of the name."
 
 (define-derived-mode net-domain-mode net-mode "Net Domain"
   "Major mode for inspecting one domain name.
-\\{net-mode-map}")
+\\{net-mode-map}"
+  :interactive nil)
 
 ;;;###autoload
 (defun net-domain-inspect (domain)
@@ -474,6 +475,7 @@ identity of the name."
 (net-register-kind 'domain
                    '(:label "Domain"
                      :open net-domain-inspect
+                     :report net-domain-report
                      :sniff net-domain--sniff
                      :priority 10))
 

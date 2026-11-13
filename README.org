@@ -74,7 +74,6 @@ a URL counts as an address.
 |-----------+-------------------------+----------------------------------------|
 | =RET=       | =push-button=             | follow a field or address button       |
 | =TAB=       | =net-toggle-section=      | fold the nearest section with a body   |
-| =TAB=       | =forward-button=          | on a value button: next button         |
 | =C-c TAB=   | =magit-section-cycle=     | cycle the fold of a section            |
 | =S-TAB=     | =magit-section-cycle-global= | cycle every fold                    |
 | =n=, =p=    | =magit-section-forward=, =-backward= | next, previous section      |
@@ -82,7 +81,7 @@ a URL counts as an address.
 | =^=         | =magit-section-up=        | go to the parent section               |
 | =1= to =4=  | =magit-section-show-level-N= | show that many levels             |
 | =q=         | =quit-window=             | bury the inspect buffer                |
-| =gr=        | =revert-buffer=           | render the value again                 |
+| =gr=        | =revert-buffer=           | render the value again, =C-u= forces |
 | =w=         | =net-copy-value=          | copy the inspected value               |
 | =b=         | =net-rdap=                | fetch RDAP data for this value         |
 | =J=         | =net-json-view=           | show the JSON report of this value     |
@@ -125,13 +124,17 @@ cursor with its row, and the column of point travels with it.  A report
 that grows therefore does not move the cursor, and neither does a
 second window that shows the same buffer.
 
+=gr= renders only when the report of the value changed, so an
+unchanged address keeps its buffer text, its folds, its point and the
+RDAP answer that it already shows.  =C-u gr= renders again regardless.
+
 The buffer is a tree of =magit-section= sections, so the Magit keys
 work: =TAB= folds the section around point, =C-c TAB= cycles the fold
 of a section and its children, =S-TAB= cycles every fold, =n= and =p=
 move between sections, =^= goes to the parent and =1= to =4= show that
 many levels.  A refresh keeps the sections that you folded, and the
-section at point is highlighted.  =TAB= on a value button still moves
-to the next button, because a button carries its own key map.
+section at point is highlighted.  =TAB= on a value button folds too,
+because every button carries a key map of its own.
 
 The report itself is the section tree: each heading of the report
 becomes one foldable section and each row one section of its own, so
@@ -152,9 +155,11 @@ package that speaks =magit-section=:
      (message "%s" (oref section value)))))
 #+end_src
 
-=magit-section-inhibit-markers= is =t= and
-=magit-section-show-child-count= is nil in every inspect buffer, because
+=magit-section-inhibit-markers= is =t= in every inspect buffer, because
 a render inserts the tree once and never edits it again.
+=magit-section-show-child-count= keeps its default value: no heading of
+this package ends with a colon, so no count ever rewrites a heading, and
+a reader who turns counts on still sees nothing change.
 
 ** RDAP
 
@@ -164,7 +169,9 @@ lookup replaces that section.  An error answer shows the RDAP code,
 title and description, and a failed or timed-out request shows a
 warning line.  =net-rdap-timeout= sets the wait in seconds, 30 by
 default, and a late answer still replaces the warning.  =gr= renders
-the value again and drops the RDAP section with it.  The command only
+the value again, and an unchanged value keeps the RDAP section that it
+already shows; =C-u gr= drops that section with the forced render.  The
+command only
 runs when you invoke it.  Opening, reverting or rendering a buffer
 never touches the network.
 
@@ -378,7 +385,7 @@ the commands of =net-mode-map= a state key:
 | =RET=   | =push-button=         | follow a field or address button |
 | =TAB=   | =net-toggle-section=  | fold the nearest section         |
 | =q=     | =quit-window=         | bury the inspect buffer          |
-| =gr=    | =revert-buffer=       | render the value again           |
+| =gr=    | =revert-buffer=       | render the value again, =C-u= forces |
 | =w=     | =net-copy-value=      | copy the inspected value         |
 | =b=     | =net-rdap=            | fetch RDAP data for this value   |
 | =i=     | =net-inspect=         | inspect the address at point     |

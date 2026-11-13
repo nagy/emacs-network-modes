@@ -247,7 +247,8 @@ has no RDAP identity, so the report carries none."
 
 (define-derived-mode net-vsock-mode net-mode "Net VSOCK"
   "Major mode for inspecting one AF_VSOCK address.
-\\{net-mode-map}")
+\\{net-mode-map}"
+  :interactive nil)
 
 ;;;###autoload
 (defun net-vsock-inspect (address)
@@ -272,6 +273,7 @@ has no RDAP identity, so the report carries none."
 (net-register-kind 'vsock
                    '(:label "VSOCK"
                      :open net-vsock-inspect
+                     :report net-vsock-report
                      :sniff net-vsock--sniff
                      :priority 50))
 

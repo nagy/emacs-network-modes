@@ -675,7 +675,8 @@ identity of the number."
 
 (define-derived-mode net-asn-mode net-mode "Net ASN"
   "Major mode for inspecting one autonomous system number.
-\\{net-mode-map}")
+\\{net-mode-map}"
+  :interactive nil)
 
 ;;;###autoload
 (defun net-asn-inspect (asn)
@@ -702,6 +703,7 @@ bare integer or a version-like token stays unclaimed."
 (net-register-kind 'asn
                    '(:label "ASN"
                      :open net-asn-inspect
+                     :report net-asn-report
                      :sniff net-asn--sniff
                      :priority 45))
 

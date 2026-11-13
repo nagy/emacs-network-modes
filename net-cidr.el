@@ -305,7 +305,8 @@ identity of the prefix.  `net--render-report' renders it, and
 
 (define-derived-mode net-cidr-mode net-mode "Net CIDR"
   "Major mode for inspecting one CIDR prefix.
-\\{net-mode-map}")
+\\{net-mode-map}"
+  :interactive nil)
 
 ;;;###autoload
 (defun net-cidr-inspect (prefix)
@@ -329,6 +330,7 @@ identity of the prefix.  `net--render-report' renders it, and
 (net-register-kind 'cidr
                    '(:label "CIDR"
                      :open net-cidr-inspect
+                     :report net-cidr-report
                      :sniff net-cidr--sniff
                      :priority 60))
 

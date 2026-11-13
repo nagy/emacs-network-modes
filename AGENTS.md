@@ -32,7 +32,7 @@ path that touches the network, and it runs only when invoked.
 |`net-xref.el`                      |Opt-in xref backend|
 |`net-evil.el`                      |Opt-in evil bindings (`net-evil-mode`)|
 |`test/network-modes-test-helper.el`|Shared ERT fixtures: temporary-file macros, packed table builder, IP number helper, section lookup|
-|`test/net-mode-test.el`            |ERT suite for the base mode, the section tree, the JSON view, point keeping, folding and text links (74 tests)|
+|`test/net-mode-test.el`            |ERT suite for the base mode, the section tree, the JSON view, point keeping, folding, refreshing and text links (76 tests)|
 |`test/net-asn-test.el`             |ERT suite for AS numbers and the IP to AS ranges (16 tests)|
 |`test/net-ip-test.el`              |ERT suite for IP addresses (12 tests)|
 |`test/net-domain-test.el`          |ERT suite for domain names and the PSL (8 tests)|
@@ -77,10 +77,10 @@ update` refreshes.
 ### Kind registry
 
 `net-mode.el` keeps `net-kinds`, an alist of `KIND . PLIST`.  Each mode
-file calls `net-register-kind` at load time with `:open`, `:sniff` and
-`:priority`.  `net-sniff` requires the mode features lazily via
-`net--kind-features` and tries the sniffers from the highest priority to
-the lowest:
+file calls `net-register-kind` at load time with `:open`, `:report`,
+`:sniff` and `:priority`.  `net-sniff` requires the mode features lazily
+via `net--kind-features` and tries the sniffers from the highest
+priority to the lowest:
 
 |Kind    |Priority|Notes                                                    |
 |--------|--------|---------------------------------------------------------|
@@ -177,8 +177,13 @@ which the view parses again with hash tables and embeds whole under
 ### Buffers and rendering
 
 `net-display` creates or reuses `*net-KIND VALUE*`, calls the mode,
-stores `net--kind`, `net--value` and `net--render-function`, then calls
-`net-refresh`, which erases the buffer and runs the renderer.  The
+stores `net--kind`, `net--value`, `net--render-function` and
+`net--report-function`, then calls `net-refresh`.  `net-refresh` renders
+only when the key of `net--render-key` differs from `net--rendered`, the
+key of the last render, so a refresh of unchanged data keeps the section
+objects, the folds, the point and the RDAP answer.  A user forces a
+render with `C-u g`, which passes the FORCE argument through
+`revert-buffer`.  `net--render` does the erasing and the rendering.  The
 refresh clears the modified flag with `set-buffer-modified-p nil`, and
 both RDAP render paths clear it too, so a read-only inspect buffer
 never shows a modified flag and never prompts on quit.  `net-refresh`
@@ -213,10 +218,11 @@ because `magit-insert-heading` must run while the section is open.
 `C-c TAB`, `<backtab>`, `n`, `p`, `M-n`, `M-p`, `^` and `1` to `4`
 reach the section commands.  `net-mode-map` rebinds `TAB` to
 `net-toggle-section`, which folds the nearest section that carries a
-body, so a reader folds a table from one of its rows; a value button
-carries its own `keymap` text property, so `TAB` on a button still
-moves to the next button and `RET` pushes it.  `RET`, `w`, `b`, `J`
-and `i` stay as they were.
+body, so a reader folds a table from one of its rows.  Every button
+carries `net-button-map`, which inherits `button-map` and binds `TAB`
+back to `net-toggle-section`, because the `keymap` property of a button
+beats the key map of the mode; `RET` still pushes the button.  `RET`,
+`w`, `b`, `J` and `i` stay as they were.
 
 `net--imenu-index` walks the section tree with `magit-map-sections` and
 lists every `net-section`, sorted by position.  A row stays out, or the
@@ -262,17 +268,23 @@ gains an ordinal (`"Last changed#2"`), the first keeps the bare label.
 `net--with-label-counts` binds a fresh counter per section, so two
 sections can share a label.
 
-`net-mode` sets two options of the parent with a comment in the body:
+`net-mode` sets one option of the parent and two display settings, each
+with a comment in the body:
 
 - `magit-section-inhibit-markers` is `t`, because a render inserts
   every section once and never edits the report again, so a position
   stays valid as a plain integer.  The library documents a
   superlinear marker cost; the same layout measured 0.056 s without
   markers against 0.389 s with them at 4000 sections on Emacs 31.
-- `magit-section-show-child-count` is nil, because the count rewrites
-  the heading of a section after its children recorded their
-  positions, which shifts every later position of the tree.  A count
-  that carries information belongs in the heading text.
+- `truncate-lines` is nil, because a rendered value can hold a long
+  remark or a list of related addresses, and a wrapped row keeps every
+  address of that list readable.  `line-move-visual` follows it to nil,
+  because the parent sets it for its truncation.
+- `magit-section-show-child-count` stays at its default, because a count
+  would rewrite the heading of a section after its children recorded
+  their positions, which shifts every later position of the tree.  No
+  heading of this package ends with a colon, so no rewrite happens; a
+  count that carries information belongs in the heading text.
 
 Marker free rendering forbids `magit-insert-section-body` (the lazy
 body calls `set-marker-insertion-type` on `end` and signals).  The one
@@ -479,8 +491,8 @@ addresses, status, events, entities and remarks; the entities and the
 remarks open a subsection, so a fold of the RDAP section hides them.  An answer with `errorCode` renders the
 code, the title and the description instead of the fields, and an
 unparseable answer renders the HTTP status.  `net--fill-text` wraps a
-remark at 78 columns before the renderer inserts it, because the
-buffer truncates a long line and a fill after the insert would move
+remark at 78 columns before the renderer inserts it, so a remark keeps a
+readable measure, and because a fill after the insert would move
 the end of the row section.
 
 A buffer-local `net--rdap-in-flight` flag prevents duplicate requests.
@@ -613,6 +625,11 @@ A new test file needs no flake edit, because `checkPhase` expands the
 same glob.  Every test file loads the helper, so the check adds `test/`
 to the load path.
 
+A test that needs a real render forces one with `(net-refresh t)`,
+because `net-refresh` renders nothing when the report did not change.
+That keeps a point or fold test honest, and the skip itself stays
+tested through the object identity of a section.
+
 `nix flake check` runs four gates:
 
 - `packages.network-modes`: `melpaBuild` byte-compiles with warnings as
@@ -675,11 +692,21 @@ state with a concurrent check.  No check writes `export HOME=$TMPDIR`.
   add its key, its item and its value in `net-KIND-report`, and both the
   buffer and the JSON view follow.  Keep a display label out of the
   item key, and keep the JSON name in the key.
+- A new kind registers its report builder as `:report`, because
+  `net-refresh` calls it to decide whether a render changes anything.
+  Keep that builder free of side effects beyond the database caches, or
+  a refresh compares a report that differs from the rendered one on
+  every call.
+- Every `define-derived-mode` form carries `:interactive nil`, because
+  the modes serve `net-inspect` and the other entry points, and nobody
+  should start one on an empty buffer.
 - A heading line comes from `net--insert-heading-line` inside its
-  `net-section`; it passes a string that already carries `face`, because
-  `magit-insert-heading` keeps such a string as it is.  Do not lean on
-  `font-lock-face`: it shows only through the font-lock alias, and the
-  parent mode turns syntactic font locking off.
+  `net-section`; it passes a string that carries `face` and the same
+  face in `font-lock-face`, because `magit-insert-heading` keeps such a
+  string as it is.  The `face` property works on its own, and the
+  `font-lock-face` property needs the font-lock alias, which stays
+  available because the parent mode turns only syntactic font locking
+  off and nothing calls `font-lock-ensure`.
 - A renderer binds `net--with-label-counts` once per section, so the
   label counters stay inside one parent.  A top-level item runs inside
   the binding of `net--render-report`'s caller.

@@ -157,6 +157,33 @@
       (should (string-match-p "11000000\\.00000000\\.00000010\\.00000001"
                               (buffer-string))))))
 
+(ert-deftest net-mode-test-refresh-skips-unchanged ()
+  "A refresh of unchanged data keeps the section objects.
+A forced refresh builds new ones, so the test proves that the skip
+path and the render path differ."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (let ((section (net-test--section 'net-section "Address")))
+            (net-refresh)
+            (should (eq (net-test--section 'net-section "Address")
+                        section))
+            (net-refresh t)
+            (should-not (eq (net-test--section 'net-section "Address")
+                            section))))
+      (kill-buffer buffer))))
+
+(ert-deftest net-mode-test-refresh-keeps-rdap-section ()
+  "A refresh of unchanged data keeps the RDAP answer."
+  (let ((buffer (net-ip-inspect "192.0.2.1")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (net--rdap-draw-section
+           (lambda () (net-insert-field "Handle" "TEST-1")))
+          (net-refresh)
+          (should (net-test--section 'net-field "Handle")))
+      (kill-buffer buffer))))
+
 (ert-deftest net-mode-test-modes-drop-the-project-directory ()
   "Every inspect mode starts its buffer in variable `temporary-file-directory'.
 The rendered data comes from the network, not from a file, so the
@@ -924,7 +951,7 @@ that holds the row."
           (goto-char (point-min))
           (re-search-forward "^Class ")
           (net-toggle-section)
-          (net-refresh)
+          (net-refresh t)
           (should (net-test--folded-p "Classification"))
           (should-not (net-test--folded-p "Address")))
       (kill-buffer buffer))))
@@ -962,8 +989,8 @@ that holds the row."
 
 (ert-deftest net-mode-test-section-keys ()
   "The mode keeps the section keys and the button keys.
-`TAB' on the label of a row folds its section, `TAB' on a value
-button moves to the next button, and `RET' pushes the button."
+`TAB' folds the nearest section, on the label of a row and on a
+value button alike, and `RET' pushes the button."
   (with-current-buffer (net-ip-inspect "192.0.2.1")
     (should (eq (lookup-key net-mode-map (kbd "TAB"))
                 #'net-toggle-section))
@@ -976,7 +1003,7 @@ button moves to the next button, and `RET' pushes the button."
     (re-search-forward "^Class ")
     (should (eq (key-binding (kbd "TAB")) #'net-toggle-section))
     (goto-char (next-button (point-min)))
-    (should (eq (key-binding (kbd "TAB")) #'forward-button))
+    (should (eq (key-binding (kbd "TAB")) #'net-toggle-section))
     (should (eq (key-binding (kbd "RET")) #'push-button))))
 
 (defun net-test--buttons ()
