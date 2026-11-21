@@ -32,8 +32,7 @@ is `magit-section`.  A buffer reads pinned offline databases, and
 
 ## Build and test
 
-- `nix flake check`: the gate.  Runs the package build, the ERT suite
-  twice, package-lint, checkdoc, the packed-table check and treefmt.
+- `nix flake check`: the gate.
 - `nix build`: the package derivation.
 - `nix develop`: dev shell with the wrapped Emacs, package-lint,
   embark and evil.
