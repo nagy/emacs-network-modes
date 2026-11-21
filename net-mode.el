@@ -327,7 +327,10 @@ PROPERTY selects which property of the registered address kind."
 
 (defun net-sniff (string)
   "Return (KIND . VALUE) when STRING is a known network address.
-Return nil when no registered mode recognizes STRING."
+Return nil when no registered mode recognizes STRING.
+The sniffers run from the highest `:priority' to the lowest, so a
+narrow syntax claims a token before a broad one.  A new kind takes a
+priority that matches how narrow its syntax is."
   (net--load-kinds)
   (let ((kinds (sort (copy-sequence net-kinds)
                      (lambda (a b)
@@ -1813,11 +1816,13 @@ show that many levels."
   (setq-local bookmark-make-record-function #'net--bookmark-make-record)
   ;; A render inserts every section once and never edits the report
   ;; again, so a position stays valid as a plain integer: markers cost
-  ;; a superlinear render above a few thousand sections.  A child
-  ;; count would rewrite the heading of a section after its children
-  ;; recorded their positions, which shifts every later position of
-  ;; the tree, so no heading of this buffer ends with a colon and the
-  ;; option of the reader stays at its default.
+  ;; a superlinear render above a few thousand sections.  This is why
+  ;; `magit-insert-section-body' stays unused: its lazy body calls
+  ;; `set-marker-insertion-type' on the `end' slot and signals on an
+  ;; integer.  A child count would rewrite the heading of a section
+  ;; after its children recorded their positions, which shifts every
+  ;; later position of the tree, so no heading of this buffer ends
+  ;; with a colon and the option of the reader stays at its default.
   (setq-local magit-section-inhibit-markers t)
   ;; A rendered value can hold a long remark or a list of related
   ;; addresses, so the buffer wraps at the window edge instead of

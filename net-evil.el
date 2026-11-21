@@ -86,7 +86,10 @@ A narrow set, because visual state needs its text objects.  RET
 follows the button at point.")
 
 (defun net-evil--bind (state keys)
-  "Bind STATE's evil keys from the KEYS list."
+  "Bind STATE's evil keys from the KEYS list.
+A key description goes through `key-parse', because `define-key'
+reads a plain string as literal characters and would bind three keys
+for the description RET."
   (apply #'evil-define-minor-mode-key state 'net-evil-local-mode
          (mapcan (lambda (binding)
                    (list (key-parse (car binding)) (cdr binding)))

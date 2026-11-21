@@ -40,6 +40,10 @@
 ;; When point is on a section heading, `TAB' folds or unfolds that
 ;; section, the same key that the buffer itself gives it.
 ;;
+;; Every action reads its target through `(interactive "s...")',
+;; because `embark-act' injects the target into the first minibuffer
+;; prompt instead of calling the command with an argument.
+;;
 ;; This module is opt-in:
 ;;
 ;;   (require 'embark-net)
