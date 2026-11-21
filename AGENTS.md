@@ -2,755 +2,135 @@
 
 ## Purpose
 
-A set of read-only Emacs major modes that inspect network addresses:
-IPv4/IPv6 addresses, CIDR prefixes, MAC addresses, autonomous system
-numbers, domain names and AF_VSOCK addresses.
-
-Every mode derives from `net-mode`, which derives from
-`magit-section-mode`.  The shared layer supplies one buffer per
-inspected value, a tree of Magit sections for folds, motion and the
-section index, a report summary that reaches the JSON view, copyable
-field buttons, cross-mode address buttons, bookmarks, the `net-inspect`
-dispatcher and the explicit `net-rdap` command.  RDAP is the only code
-path that touches the network, and it runs only when invoked.
+`network-modes` gives Emacs read-only major modes that inspect network
+values: IPv4 and IPv6 addresses, CIDR prefixes, MAC addresses,
+autonomous system numbers, domain names and AF_VSOCK addresses.  Emacs
+Lisp on Emacs 31.1, AGPL-3.0-or-later.  The single required dependency
+is `magit-section`.  A buffer reads pinned offline databases, and
+`net-rdap` is the only code path that touches the network.
 
 ## Layout
 
-|File                               |Purpose|
-|-----------------------------------|------------------------------------------------------------|
-|`network-modes.el`                 |Entry library and package namesake: requires the base mode and all six modes, then provides the feature `network-modes`. `(use-package network-modes ...)` and `:ensure t` load and resolve through it.|
-|`net-mode.el`                      |Base mode, kind registry, dispatcher, section renderer, point keeping, text links, bookmarks, RDAP, JSON view|
-|`net-geo.el`                       |Country lookup from packed range tables or PDDL CSVs|
-|`net-ip.el`                        |IP parsing/formatting, blocks, registry reader, origin AS, IP mode|
-|`net-cidr.el`                      |Prefix arithmetic, CIDR mode|
-|`net-mac.el`                       |MAC/EUI-64 parsing, bit flags, IEEE and manuf vendor lookup|
-|`net-asn.el`                       |AS parsing, IANA registry, ipverse metadata, IP to AS ranges, ASN mode|
-|`net-domain.el`                    |Domain parsing, Punycode encoder, PSL lookup, domain mode|
-|`net-vsock.el`                     |AF_VSOCK parsing, `sockaddr_vm` layout, service names, vsock mode|
-|`ol-net.el`                        |Opt-in Org link types (`net-*:` and `net:`)|
-|`embark-net.el`                    |Opt-in Embark target and actions (`embark-net-mode`)|
-|`net-xref.el`                      |Opt-in xref backend|
-|`net-evil.el`                      |Opt-in evil bindings (`net-evil-mode`)|
-|`test/network-modes-test-helper.el`|Shared ERT fixtures: temporary-file macros, packed table builder, IP number helper, section lookup|
-|`test/net-mode-test.el`            |ERT suite for the base mode, the section tree, the JSON view, point keeping, folding, refreshing and text links (76 tests)|
-|`test/net-asn-test.el`             |ERT suite for AS numbers and the IP to AS ranges (16 tests)|
-|`test/net-ip-test.el`              |ERT suite for IP addresses (12 tests)|
-|`test/net-domain-test.el`          |ERT suite for domain names and the PSL (8 tests)|
-|`test/net-cidr-test.el`            |ERT suite for CIDR prefixes (7 tests)|
-|`test/net-mac-test.el`             |ERT suite for MAC addresses (5 tests)|
-|`test/net-evil-test.el`            |ERT suite for the evil bindings and the fold list (10 tests)|
-|`test/net-vsock-test.el`           |ERT suite for AF_VSOCK addresses (3 tests)|
-|`test/net-geo-test.el`             |ERT suite for the country lookup (3 tests)|
-|`test/embark-net-test.el`          |ERT suite for the Embark targets (4 tests)|
-|`test/net-xref-test.el`            |ERT suite for the xref backend (1 test)|
-|`test/network-modes-test.el`       |ERT suite for the entry library (1 test)|
-|`flake.nix`                        |Database inputs and derivation, `melpaBuild`, outputs and checks|
-|`tools/pack-network-data.el`       |Packs the range databases into fixed-width tables|
-|`README.org`                       |User documentation|
-|`LICENSE`                          |AGPL-3.0-or-later|
+- `network-modes.el`: entry library.  Loads the base mode and the six
+  modes and provides the feature `network-modes`.
+- `net-mode.el`: base mode and shared layer.  Kind registry,
+  dispatcher, report renderer, point keeping, text links, bookmarks,
+  RDAP, JSON view, CSV and packed table readers.
+- `net-ip.el`, `net-cidr.el`, `net-mac.el`, `net-asn.el`,
+  `net-domain.el`, `net-vsock.el`: one kind each, split into parser,
+  sniffer, report builder and mode.
+- `net-geo.el`: country lookup over the range tables.
+- `ol-net.el`, `embark-net.el`, `net-xref.el`, `net-evil.el`: opt-in
+  integration libraries.  No mode requires them.
+- `test/`: ERT suite, one `*-test.el` per source unit, shared fixtures
+  in `network-modes-test-helper.el`.
+- `tools/pack-network-data.el`: build-time packer for the four range
+  tables.
+- `flake.nix`: derivation, data inputs, checks, devShell, treefmt.
+- `README.org`: user documentation, the key tables and the database
+  list.  Read it before you change user-visible behaviour.
 
 ## Build and test
 
-```sh
-nix build                  # package
-nix flake check            # package + ERT + lint + checkdoc + data + treefmt
-nix develop                # Emacs with package-lint, embark, evil, magit-section
-nix fmt                    # nixfmt via treefmt
-nix flake update           # refresh pinned database files
-```
-
-`checkPhase` runs the ERT suites twice, because the JSON view takes its
-parent mode from the machine: once without the JSON grammar and once
-with `jsonGrammar` on `treesit-extra-load-path`.  `jsonGrammar` renames
-the parser of the nixpkgs grammar package to `libtree-sitter-json.so`,
-which is the name Emacs loads.
-
-The data derivation needs an `emacs-nox` that carries `magit-section`,
-because the packer loads `net-mode.el`, and four more Elisp files:
-`net-mode.el` for the `bindat` types, `net-geo.el`, `net-asn.el` and
-`net-ip.el` for the readers and the address parser, and
-`tools/pack-network-data.el` for the packer.  Run the packer by hand
-with the command in its commentary.
-
-`melpaBuild` keeps `packageRequires` off the load path of its own
-build, so the derivation sets `preBuild`, `preInstall` and the first
-lines of `checkPhase` to an `emacsWithPackages` wrapper that carries
-`magit-section` and `evil`.  The wrapper supplies `EMACSLOADPATH`, so no
-phase exports it by hand.  `packageRequires` still names
-`magit-section`, so a consumer of the package gets the library through
-the package set.
-
-The package is `lib.makeOverridable`, so a consumer can substitute the
-Emacs, its package set, the build function, the evil package or the
-database derivation:
-
-```nix
-inputs.network-modes.packages.${system}.default.override {
-  emacs = pkgs.emacs-nox;
-}
-```
-
-The flake passes the commit-derived version to the builder, because a
-plain import of the expression cannot know it.  The builder defaults to
-`0.1.0`, follows an `emacs` override with `emacsPackages`,
-`magit-section` and `evil`, and takes any extra database derivation
-through `data`.
-
-Byte-compile with warnings as errors.  Every file needs
-`magit-section` on the load path:
-
-```sh
-for f in net-*.el ol-net.el embark-net.el; do
-  emacs --batch -L . -L "$MAGIT_SECTION_DIR" \
-    --eval '(setq byte-compile-error-on-warn t)' \
-    -f batch-byte-compile "$f"
-done
-```
-
-`net-evil.el` needs evil on the load path too.  Add both elisp
-directories with `-L`, the way the flake check does.
+- `nix flake check`: the gate.  Runs the package build, the ERT suite
+  twice, package-lint, checkdoc, the packed-table check and treefmt.
+- `nix build`: the package derivation.
+- `nix develop`: dev shell with the wrapped Emacs, package-lint,
+  embark and evil.
+- `nix fmt`: nixfmt through treefmt.  Do not run nixfmt directly.
 
 ## Architecture
 
+One value string reaches a report plist.  The report alone draws both
+the buffer and the JSON view.
+
 ### Kind registry
 
-`net-mode.el` keeps `net-kinds`, an alist of `KIND . PLIST`.  Each mode
-file calls `net-register-kind` at load time with `:open`, `:report`,
-`:sniff` and `:priority`.  `net-sniff` requires the mode features lazily
-via `net--kind-features` and tries the sniffers from the highest
-priority to the lowest:
+A mode file calls `net-register-kind` at load time with `:open`,
+`:report`, `:sniff` and `:priority`.  `net-sniff` loads a kind library
+on demand and tries the sniffers from the highest priority to the
+lowest, so a narrow syntax claims a token before a broad one.  A new
+kind takes a priority that matches how narrow its syntax is.
 
-|Kind    |Priority|Notes                                                    |
-|--------|--------|---------------------------------------------------------|
-|`cidr`  |60      |Requires `/`                                             |
-|`mac`   |55      |Requires a colon, hyphen or Cisco dot group form         |
-|`vsock` |50      |Accepts `CID:PORT` and `vsock://CID:PORT`                |
-|`asn`   |45      |Only `AS<n>` and `AS<n>.<m>` sniff; bare tokens stay free|
-|`ip`    |40      |IPv4/IPv6, including zones and IPv4 tails                |
-|`domain`|10      |Requires a dot and rejects all-numeric labels            |
+### Reports
 
-`net-inspect` runs the dispatcher on the token at point (the
-`net-address` thing type) or on a prompted string.  `net-read-address`
-serves that prompt: it completes from `net-inspect-history`, announces
-the `net-address` completion category and annotates every candidate
-with the label of the kind that recognizes it, so a completion UI shows
-`ASN` beside an AS number.  Empty input answers the address at point.  `net--thing-bounds`
-drops trailing punctuation before the sniff, so an address followed by
-a sentence period still resolves.  `net--thing-candidates` also looks
-inside a URL, so the host of `https://example.org:8443/path` resolves
-to `example.org`.
+Every mode owns a pure `net-KIND-report` that returns one plist with
+`:summary`, `:sections` and, when the value has one, its RDAP
+identity.  `net--render-report` draws that plist.  `net--render-item`
+owns the item shapes and `net--json-value` owns the JSON encoding.
+Report keys spell the JSON keys, and RDAP names (RFC 9083) win where
+the concept exists.  A display label never reaches the JSON.
 
-### Reports and the JSON view
+### Rendering
 
-Every mode owns a pure `net-KIND-report` that returns one plist.  The
-plist carries `:summary`, `:sections` and, when the value has one, the
-`rdap` identity plus `:rdap-type` and `:rdap-key`.  `net-KIND--display`
-is a single call to `net--render-report`, so the report and the buffer
-cannot drift apart.  `:summary` shows up as the `summary` member of the
-JSON view and nowhere in the buffer, because every fact it names also
-reaches a field, a link or a record row.
-
-Report keys spell the JSON keys: `:objectClassName`, `:totalAddresses`,
-`:startAutnum`.  RDAP names (RFC 9083) win where the concept exists,
-which covers `ip`, `cidr`, `asn` and `domain`.  A MAC address and a
-vsock address carry no `rdap` member, because no registry defines
-their object classes.  Display labels never reach the JSON, so a
-renderer can reword a row without breaking a consumer.
-
-A section holds either `:items` plus its values, one object, or
-`:records` with one `:json` plist and one list of items per row, an
-array of objects.  A records section can also hold `:items`, which it
-renders after the rows.  Those items belong to the buffer only, so a
-caveat such as the vsock service note never reaches the JSON.  An item is one of five lists, matching the five
-renderer helpers:
-
-|Item                             |Renders                               |
-|---------------------------------|--------------------------------------|
-|`(:field LABEL KEY [TEXT])`      |`net-insert-field`                    |
-|`(:link LABEL KIND KEY [TEXT])`  |`net-insert-link`                     |
-|`(:links LABEL KIND KEY [TEXTS])`|`net-insert-link-list`                |
-|`(:text LABEL KEY [FILEKEY])`    |`net-insert-text` or `net-insert-file`|
-|`(:warning KEY)`                 |`net-insert-warning`                  |
-
-`KEY` names a key of the surrounding plist.  `TEXT` and `TEXTS` only
-change what the buffer shows, so `:privateText` can read
-`yes (RFC 1918)` while `:private` holds `t`.  A boolean member holds
-`t` or `:json-false`, never `nil`, because `nil` encodes as `null`.
-`net--flag` converts the `True`, `False` and `N/A` cells of the
-registry CSV files.  `FILEKEY` names the path of the database that the
-row describes, and the renderer opens the file as a button when it is
-readable.
-
-`net--json-value` walks a report: a plist becomes an object, any other
-list an array, and an integer beyond 2^53-1 a string, because
-`json-encode` prints exact bignums that other parsers round.  IPv6
-values and host counts need that.  `:json-extra` adds members that the
-buffer does not show, such as a country code next to the country name.
-
-`net-json-mode-map` binds `q` to `quit-window`, `g r` to
-`net--json-revert` and `J` to `net--json-show-source`, because the
-parent mode has no quit key and the reader arrives from the report.
-`net--json-imenu-index` reads the text and lists every line that opens
-an object or an array, so both parents get the section index that the
-tree-sitter parent lacks; a leaf stays out, which keeps the index
-short.  `net-json-side-window` shows the buffer in a side window at
-the right edge and keeps the report selected.
-
-`net-json-view` (`J`) creates a `net-json-mode` buffer, which derives
-from `json-ts-mode` when the machine carries the JSON tree-sitter
-grammar and from `js-json-mode` otherwise, because `json-ts-mode`
-signals an error without the grammar.  The choice happens at load time,
-so the `define-derived-mode` sits inside an `if` and the file declares
-the function for the byte compiler.  The flake check runs the suite
-twice, once without the grammar and once with the wrapper of
-`jsonGrammar`, so both parents stay tested.  The buffer stays read-only and shares itself: the
-source buffer keeps it in `net--json-buffer`, the JSON buffer keeps the
-source in `net--json-source`, `net-refresh` and both RDAP paths call
-`net--json-redraw`, and `gr` calls `net--json-revert`.  The buffer name
-comes from `net-json-buffer-name-format`, the source name plus ` JSON`.
-After a successful RDAP lookup `net--rdap-raw` holds the response body,
-which the view parses again with hash tables and embeds whole under
-`rdapAnswer`; the renderer keeps the alist parse.
-
-### Buffers and rendering
-
-`net-display` creates or reuses `*net-KIND VALUE*`, calls the mode,
-stores `net--kind`, `net--value`, `net--render-function` and
-`net--report-function`, then calls `net-refresh`.  `net-refresh` renders
-only when the key of `net--render-key` differs from `net--rendered`, the
-key of the last render, so a refresh of unchanged data keeps the section
-objects, the folds, the point and the RDAP answer.  A user forces a
-render with `C-u g`, which passes the FORCE argument through
-`revert-buffer`.  `net--render` does the erasing and the rendering.  The
-refresh clears the modified flag with `set-buffer-modified-p nil`, and
-both RDAP render paths clear it too, so a read-only inspect buffer
-never shows a modified flag and never prompts on quit.  `net-refresh`
-also sets `mode-line-process` to the inspected value, so a narrow
-window that truncates the buffer name keeps the value in the mode
-line; the mode name supplies the kind.  `net-mode`
-also sets the buffer-local `default-directory` to
-`temporary-file-directory`, because the buffer shows network data
-and belongs to no project: `project.el`, version control and
-language servers stay out of it.  A new buffer path that does not
-go through `net-display` sets the directory itself, with
-`file-name-as-directory` so the value keeps its trailing slash.
-Renderers use
-only the helpers in `net-mode.el`, and every helper opens one section:
-
-- `net-insert-field` (button that copies the value)
-- `net-insert-link` (button that opens another kind)
-- `net-insert-link-list` (comma separated buttons on one wrapping line)
-- `net-insert-text` (non-button, can span lines)
-- `net-insert-file` (button that opens a database file, and that
-  `ffap' resolves)
-- `net-insert-warning`
-- `net-set-summary` (classification for the JSON view only, because
-  the buffer body shows the same facts as fields, and the buffer name
-  and the mode line carry the kind and the value)
-
-A heading line comes from `net--insert-heading-line`, which runs inside
-the section of its heading; there is no standalone heading helper,
-because `magit-insert-heading` must run while the section is open.
-
-`net-mode` inherits the key map of `magit-section-mode`, so `TAB`,
-`C-c TAB`, `<backtab>`, `n`, `p`, `M-n`, `M-p`, `^` and `1` to `4`
-reach the section commands.  `net-mode-map` rebinds `TAB` to
-`net-toggle-section`, which folds the nearest section that carries a
-body, so a reader folds a table from one of its rows.  Every button
-carries `net-button-map`, which inherits `button-map` and binds `TAB`
-back to `net-toggle-section`, because the `keymap` property of a button
-beats the key map of the mode; `RET` still pushes the button.  `RET`,
-`w`, `b`, `J` and `i` stay as they were.
-
-`net--imenu-index` walks the section tree with `magit-map-sections` and
-lists every `net-section`, sorted by position.  A row stays out, or the
-index would list every field of the report; the JSON view keeps its own
-text based index.
-
-### Bookmarks
-
-`net--bookmark-make-record` stores the kind, the value and the point
-record of `net--point-record` under `target`.  `net--bookmark-jump`
-opens the buffer and then applies the target, so a jump lands on the
-field that the reader saved.  A record without a target, or a target
-whose row is gone, lands at `point-min`.
-
-### Sections
-
-A report becomes a tree of Magit sections.  The root section carries
-the kind of the buffer, every heading of the report becomes a
-`net-section`, and every row becomes a `net-field` or a `net-warning`
-section of its own:
-
-|Type          |Value                            |Where|
-|--------------|---------------------------------|-----|
-|`net-report`  |`net--kind`                      |root, one per buffer|
-|`net-section` |the heading text, such as `"Address"`|one per report section|
-|`net-field`   |the trimmed label of the row      |one per field, link or text row|
-|`net-warning` |the text of the warning           |one per warning row|
-
-A row has its own section because the identity of a row, and not its
-line number, is what a render restores.  A new row above the reader
-then moves the reader with its row.
-
-The report plist is the only section list.  `net--render-section` walks
-`:sections` in display order and `net--render-item` renders one item,
-so the buffer and the JSON view cannot drift apart.  Do not add a
-second knob that also lists sections: a per-kind hook list would
-duplicate the report, and the report already reaches both views.
-
-`net--field-value` makes a label unique among the siblings of one
-parent, because a parent can hold two rows with the same label, for
-example two RDAP events of the same action.  The second occurrence
-gains an ordinal (`"Last changed#2"`), the first keeps the bare label.
-`net--with-label-counts` binds a fresh counter per section, so two
-sections can share a label.
-
-`net-mode` sets one option of the parent and two display settings, each
-with a comment in the body:
-
-- `magit-section-inhibit-markers` is `t`, because a render inserts
-  every section once and never edits the report again, so a position
-  stays valid as a plain integer.  The library documents a
-  superlinear marker cost; the same layout measured 0.056 s without
-  markers against 0.389 s with them at 4000 sections on Emacs 31.
-- `truncate-lines` is nil, because a rendered value can hold a long
-  remark or a list of related addresses, and a wrapped row keeps every
-  address of that list readable.  `line-move-visual` follows it to nil,
-  because the parent sets it for its truncation.
-- `magit-section-show-child-count` stays at its default, because a count
-  would rewrite the heading of a section after its children recorded
-  their positions, which shifts every later position of the tree.  No
-  heading of this package ends with a colon, so no rewrite happens; a
-  count that carries information belongs in the heading text.
-
-Marker free rendering forbids `magit-insert-section-body` (the lazy
-body calls `set-marker-insertion-type` on `end` and signals).  The one
-place that edits the buffer after a render is the RDAP answer: it
-appends at `point-max`, so the integers of the earlier sections keep
-their value.
-
-`net-toggle-section` folds the nearest section that carries a body, so
-a reader folds a table from any of its rows.  `C-c TAB`,
-`<backtab>`, `n`, `p`, `^` and `1` to `4` stay the commands of the
-parent mode.
-
-A mode sets `net--rdap-type` and `net--rdap-key` at the end of its
-renderer when the value has an RDAP identity.
-
-### Point keeping
-
-A render erases the buffer and inserts a new tree, so `net--point-record`
-reads the section of point before the render and `net--restore-point`
-finds it afterwards.  The record holds the `magit-section-ident` of the
-section, the number of lines from its start and the column of point,
-clipped to the end of a shorter line.  A line that belongs to no
-section, such as the blank line between two headings, records the root
-section, the way `magit-current-section` answers it.
-
-The record holds no section object, because a bookmark serializes the
-record to a file and an EIEIO object does not read back.
-`net--record-position` looks the identity up with `magit-get-section`
-instead.  A section that the new render drops leaves point at
-`point-min`.
-
-`net--window-records` and `net--restore-window-points` do the same for
-every other window that shows the buffer, because a render erases the
-text that a window point marker points into; both take the record and
-the lookup function as arguments.  `net--json-render` passes the text
-based pair instead, `net--text-record` and `net--text-record-position`,
-because the JSON view carries no sections: it records the text of the
-line, its ordinal among the equal lines above it and the column.  An
-RDAP answer goes through `net--rdap-draw-section`, which replaces the
-section and restores the position, so an asynchronous answer never
-moves the reader.
-
-### Database rows
-
-A row that names a database file prints a short description only.
-`net-data-description` formats the plain file name, an optional count
-and the modification date, and `net-insert-file` hides the path in the
-`net-file` text property on a button that `RET` opens.  The report
-keeps the path under its own key, such as `:sourceFile`, so the JSON
-view carries the real path while the buffer does not.
-
-`net-mode` installs `net--file-at-point` in the buffer-local
-`ffap-alist` with a key that matches every name, so
-`ffap-file-at-point`, `find-file-at-point` and `ffap-at-mouse` reach
-the file.  The key cannot name the major mode: `define-derived-mode`
-runs the body of the parent before it sets `major-mode`, and `ffap`
-matches a symbol key with `eq`.  The alist entry stays buffer-local, so
-other buffers keep the stock `ffap` behaviour.
-
-### Text links
-
-A remark or a note can name an address or a URL.  `net-insert-text`
-runs `net--link-addresses` over the text that it inserted, and every
-token that `net-sniff` recognizes becomes a `net--buttonize-address`
-button of the same shape as a link row, so the reader opens its inspect
-buffer from inside the sentence.  `net-text-buttons` turns the pass
-off.  A `:text` item that names an unreadable file passes `PLAIN`,
-because a file name such as `as-ranges-v4.bin` reads as a domain name.
-
-URLs and mail addresses go through `goto-address-mode`, which
-`net-mode` turns on when `net-goto-address` holds.  The mode marks them
-with overlays, so a copy of the text stays plain, and it never adds a
-button that the renderer would need to know about.
-
-`embark-net.el` adds `embark-net-target-database-file`, because the
-stock Embark file finder needs a file shaped token at point, and a row
-can read `IANA special-purpose registry CSV`.
-
-`embark-net-map` binds `RET` to inspect, `J` to inspect and show the
-JSON report, `b` to inspect and fetch RDAP, and `w` to copy.
-`embark-net-target-heading` and `embark-net-heading-map` give a
-section heading one action, `TAB`, which folds or unfolds that
-section.  Every action takes its argument through `(interactive
-"s...")`, because `embark-act` injects the target into the first
-minibuffer prompt instead of calling the command with an argument.
-`embark-net-mode` adds and removes both keymaps and all three
-targets.
+A render erases the buffer and inserts the tree again, so a refresh
+redraws only when the report changed.  A section keeps point by its
+identity, not by its line number, and `net--field-value` keeps the
+value of a row unique among its siblings.  The section comments of
+`net-mode.el` give the rest.
 
 ### Data access
 
-Each reader caches on a key of (file, modification time, size), so
-editing a database file invalidates the cache without a restart:
-
-| Reader                       | Format                   | Cache variable                    |
-| ---------------------------- | ------------------------ | --------------------------------- |
-| `net--read-csv-file`         | CSV with multi-line cells| none, the callers cache           |
-| `net--binary-table`          | Packed range table       | `net--binary-cache`               |
-| `net-geo--data`              | 3-column CSV ranges      | `net-geo--cache`                  |
-| `net-ip--registry-entries`   | IANA special-purpose CSV | `net-ip--registry-cache`          |
-| `net-mac--registry-text`     | IEEE registry CSV        | `net-mac--registry-cache`         |
-| `net-mac--manuf-table`       | Wireshark manuf          | `net-mac--manuf-cache`            |
-| `net-asn--registry-rows`     | IANA AS numbers CSV      | `net-asn--registry-cache`         |
-| `net-asn-entry`              | ipverse as-metadata JSON | `net-asn--memo`, `net-asn--table` |
-| `net-asn--range-text`        | iptoasn range TSV (gzip) | `net-asn--range-cache`            |
-| `net-domain--psl-load`       | Public Suffix List       | `net-domain--psl-cache`           |
-| `net-vsock--services`        | IANA service names CSV   | `net-vsock--service-cache`        |
-
-The AS metadata file is tens of megabytes.  `net-asn-entry` scans for
-the one object whose `"asn"` key matches instead of parsing the array.
-The regexp works with both pretty-printed and minified JSON, but it
-expects `"asn"` as the first key of the object.  `net-asn--scan-shape-p`
-checks that shape once per lookup, and any other file falls back to
-`net-asn--table`, the full parse.  `net-asn-load-database` builds that
-table for bulk sessions.
-
-The IP to AS number tables are large too, and they are sorted.  The
-Nix derivation packs them into a fixed-width table, and
-`net-asn-ip-entry` binary searches it.  A raw upstream TSV or gzip file
-still works: `net-asn--range-text` decompresses it once into
-`net-asn--range-cache`, and `net-asn--search-row` binary searches the
-line starts, so a lookup parses about twenty rows.  The reader gunzips
-when the file starts with the gzip magic, not when the name ends in
-`.gz`, because a Nix file input keeps no upstream name.  It uses
-`zlib-decompress-region` instead of `insert-file-contents`, so a user
-who turned off `auto-compression-mode` still gets an answer.  The
-search keeps `low` on a line start, because a midpoint can fall inside
-the current low line.  `net-ip--range-prefix` turns the covering
-range into a prefix only when the range is a single aligned block, so
-an aggregated iptoasn row renders as a range.
-
-### Packed range tables
-
-`tools/pack-network-data.el` runs at build time and writes four files:
-`geo-ranges-v4.bin`, `geo-ranges-v6.bin`, `asn-ranges-v4.bin` and
-`asn-ranges-v6.bin`.  The GeoIP CSV parse and the gzip pass therefore
-leave the run time path: the first IP buffer went from 9.2 seconds to
-0.05 seconds on IPv4, and from 13.5 seconds to 0.03 seconds on IPv6.
-
-The layout is a 20-byte header, then fixed-width rows, then a string
-table:
-
-- header: magic `NETR`, format version u16, address width u8, number
-  column count u8, string column count u8, three reserved bytes, row
-  count u32, string table offset u32
-- row: start address and end address as big-endian bytes, one u32 per
-  number column, one u32 per string column
-- string table: count u32, then each UTF-8 string with a u16 length
-
-The format has one description.  `net--binary-header-type`,
-`net--binary-row-type`, `net--binary-edge-type` and
-`net--binary-names-type` are `bindat-type` values, and both the reader
-and the packer use them.  The address widths and the column counts
-reach the type through lexical variables, so `(uint (* 8 width))` and
-`(vec numbers uint 32 t)` describe all four tables.  `bindat-unpack`
-takes a byte offset, so a lookup unpacks one row in place and no
-substring is allocated.  The packer allocates the output string once
-and packs every row into it at a computed offset.
-
-The header carries the layout, so `net--binary-table` takes the
-expected width and column counts and signals an error on a mismatch.
-Bump the format version in `net--binary-version` and in the packer
-together.  A file without the magic bytes is not a packed table, so the
-raw CSV and TSV readers stay in use for users outside Nix.  The flake
-check `checks.data-tables` runs both readers against the real
-derivation.
-
-### Address arithmetic
-
-IPv4 and IPv6 values are integers.  Emacs bignums make the same prefix
-arithmetic work for both families:
-
-- `net-ip--block` parses `ADDRESS/PREFIX` into `:start` and `:last`
-- `net-ip-in-block-p` tests containment
-- `net-cidr-parse` computes network, last address, mask and host counts
-
-`net-ip--format-ipv6` implements RFC 5952 compression: lowercase, no
-leading zeros, longest run of at least two zero groups replaced by `::`.
-
-### Punycode
-
-`net-domain--punycode-encode` implements RFC 3492.  Emacs does not ship
-`punycode.el` (it comes from libidn), so the package carries its own
-encoder.  IDNA normalization is limited to lowercasing; the buffer says
-so when a label is not ASCII.
-
-The Public Suffix List writes IDN rules in Unicode.  The lookup uses
-the Punycode form of the name, so `net-domain--psl-load` stores a
-Punycode alias for every IDN rule.
-
-### RDAP
-
-`net-rdap` calls `url-retrieve` and renders a section at the end of the
-current buffer in the callback.  A second lookup replaces that section
-instead of appending another; a buffer-local `net--rdap-start` marker
-delimits the text and `net--rdap-section` holds the root of its section
-tree.  `net--rdap-remove-section` drops both, because the tree would
-otherwise hold a stale object for the same identity and
-`magit-get-section` would find the wrong one.  `net--rdap-begin-section`
-performs the replacement, so the timeout path and the callback share
-it, and the draw binds `magit-insert-section--parent` to the root so
-the new section joins the tree instead of replacing its root.  The
-callback parses the RDAP JSON and renders handle, name, type, country,
-addresses, status, events, entities and remarks; the entities and the
-remarks open a subsection, so a fold of the RDAP section hides them.  An answer with `errorCode` renders the
-code, the title and the description instead of the fields, and an
-unparseable answer renders the HTTP status.  `net--fill-text` wraps a
-remark at 78 columns before the renderer inserts it, so a remark keeps a
-readable measure, and because a fill after the insert would move
-the end of the row section.
-
-A buffer-local `net--rdap-in-flight` flag prevents duplicate requests.
-`net-rdap-timeout` seconds later, `net--rdap-abandon` clears the flag
-and renders a warning, so a stalled connection cannot block the buffer
-for the session; a late answer still replaces that warning.  The
-callback hands its response buffer to `url-mark-buffer-as-dead`, so
-repeated lookups do not pile up one buffer each.  No automatic refresh
-or timer may call this command.
-
-### Evil
-
-`net-evil.el` is a second library, so the modes never require evil.
-It requires evil and `net-mode`, and it binds keys in normal and
-visual state only.
-
-Evil state maps take precedence over a major mode map, so `RET`, `q`,
-`w`, `b`, `J` and `i` would run an evil command instead of the inspect
-command.  The bindings put the commands of `net-mode-map` back:
-`RET` pushes a button, `TAB` folds the nearest section, `q` quits the
-window, `gr` reverts, `w` copies the value, `b` fetches RDAP, `J` opens
-the JSON view and `i` inspects the address at point.
-The motions `j`, `k`, `gg`, `G`, `C-d`, `C-u`, `/`, `n` and `N` stay
-evil.  Visual state binds only `RET`, because it needs its text objects.
-Evil keeps `TAB` for its jump motion, so the state table rebinds it,
-and the button motion of `net-mode-map` stays out.
-
-`evil-fold-list` carries an entry for a network inspect buffer, so
-`zc`, `zo`, `za`, `zO`, `zm` and `zr` fold the section tree.  The entry
-names `net-evil-local-mode`, because `evil--mode-p` compares a mode
-symbol with `eq` against `major-mode` and would never match a derived
-mode name; it reads the value of the symbol instead, and the local mode
-says that this layer owns the buffer.  Evil calls a fold action with no
-argument while the magit-section commands take a section, so every
-action wraps its command in a lambda.
-
-`net-evil-keys` and `net-evil-visual-keys` hold the key tables.
-`net-evil--bind` feeds them to `evil-define-minor-mode-key` for the
-private minor mode `net-evil-local-mode`.  `net-evil-mode` is the
-global switch.  It adds `net-evil--enable-buffer` to
-`after-change-major-mode-hook`, because the six address modes derive
-from `net-mode`, and turns the local mode on in every existing inspect
-buffer.  Turning it off removes the hook and the local mode, so the
-buffer falls back to `net-mode-map`.
+Each reader caches on a key of (file, modification time, size), so an
+edited database file invalidates the cache without a restart.  A
+packed range table carries a header that the reader checks, and the
+raw CSV or gzip form stays readable when a file lacks the magic bytes.
 
 ## Rules
 
-- Parsers and formatters are pure.  Only renderers, commands and the
-  database readers have side effects.
-
-- Side effect free helpers carry `(declare (pure t) (side-effect-free t))`:
-  the address formatters, the prefix and block arithmetic, the Punycode
-  encoder, the JSON report builders, the packed row readers,
-  `net--split-csv-line`, `net--csv-record`, `net-domain--psl-match` and
-  `net-asn-classification`.  A parser that runs a regexp keeps no
-  declaration, because `string-match`, `split-string` and `string-trim`
-  clobber the match data and `case-fold-search` changes the result.  A
-  reader must never carry one, because it fills a cache.
-
-- `defcustom` names carry the `net-` prefix.  Public functions are
-  `net-KIND-*`; internal helpers use `net--`.
-
-- The package name equals the entry library: `pname =
-  "network-modes"` in the flake and `network-modes.el` in the source.
-  `use-package SYMBOL` expands to `(require SYMBOL)` and `:ensure t`
-  looks up the package of that name, so the two names must agree.
-  Users configure the suite through
-  `(use-package network-modes :config ...)`, and the README points
-  there first.  Do not point users at `net-mode` as the package door,
-  and do not require `network-modes` from another package file.  The
-  short `net-` prefix stays: the lint gate whitelists it, because the
-  package name spells the root out in full.
-
-- Field labels and values render through the helpers in `net-mode.el`;
-  do not insert raw text in a renderer.  `net--insert-label` keeps at
-  least one space after long labels.
-
-- Every row renderer opens its own section through
-  `magit-insert-section`, and the value names the row:
-  `net--field-value` returns the label, with an ordinal when the parent
-  holds the label twice.  Do not put a count, a size or a timestamp into
-  a section value, because then the fold and the point record die on
-  every render; such data belongs in the heading text.
-
-- A new field belongs in the report builder, never in the renderer:
-  add its key, its item and its value in `net-KIND-report`, and both the
-  buffer and the JSON view follow.  Keep a display label out of the
-  item key, and keep the JSON name in the key.
-
-- A heading line comes from `net--insert-heading-line` inside its
-  `net-section`; it passes a string that carries `face` and the same
-  face in `font-lock-face`, because `magit-insert-heading` keeps such a
-  string as it is.  The `face` property works on its own, and the
-  `font-lock-face` property needs the font-lock alias, which stays
-  available because the parent mode turns only syntactic font locking
-  off and nothing calls `font-lock-ensure`.
-
-- A row that names a database file holds two members: the text, for
-  example `:source`, and the path, for example `:sourceFile`.  The
-  `:text` item names the path key as its fourth element, and the
-  renderer turns the row into a file button only when the file is
-  readable.  Build the text through `net-data-description`, so a store
-  copy reads as a pinned copy.
-
-- Booleans in a report hold `t` or `:json-false`.  A `nil` value means
-  unknown and encodes as `null`, so use `TEXT` for a row that must read
-  `no` while the member holds a real false.
-
-- Unknown values render as `unknown`; invalid input signals
-  `user-error` from the inspect command, never from a renderer.
-
-- Data files are never vendored.  Add a new one as a flake file input,
-  a symlink in the data derivation inside `flake.nix`, and a `defcustom` defaulting to
-  `(net-data-file "upstream-name")`.  The IEEE registries keep their
-  upstream file names inside `net-mac-registry-directory`.
-
-- MAC vendor data uses the IEEE registries.  MA-S and IAB share the
-  36-bit prefix length and CID shares 24 bits with MA-L, so the lookup
-  tries the files in `net-mac--registry-files` order.  The optional
-  Wireshark manuf table keys entries by `BITS:PREFIX`, which makes the
-  longest mask win.
-
-- Do not use `concat` with integer characters; use `char-to-string`.
-
-- `net-evil.el` follows the `net-` prefix and `evil-define-key` stays
-  unused: it is a macro, so a file that must compile without evil
-  cannot call it.  `net-evil--bind` calls the function
-  `evil-define-minor-mode-key` and `key-parse` converts every key
-  description, because `define-key` reads a plain string as literal
-  characters, so `"RET"` would bind three keys.  A new command in
-  `net-mode-map` belongs in `net-evil-keys`, and in
-  `net-evil-visual-keys` when visual state needs it.
-
-- `define-minor-mode` defines a defcustom, so a mode without
-  `:group 'net` fails byte-compilation with "fails to specify
-  containing group".  The evil minor-mode maps stay in
-  `evil-minor-mode-keymaps-alist` against the mode symbol, and Emacs
-  activates a map only while that symbol holds a value, so turning
-  `net-evil-local-mode` on or off needs no `evil-normalize-keymaps`
-  call.
-
-- `test/net-evil-test.el` calls `evil-local-mode` and then reads
-  `key-binding`, so it tests what the keyboard sees, not the keymap
-  directly.  It declares every evil function it calls, so a checkout
-  without evil still byte-compiles.  The fold entry of `evil-fold-list`
-  matches a buffer through `net-evil-local-mode`, because
-  `evil--mode-p` compares a symbol with `eq` against `major-mode` and a
-  derived mode name would never match.
-
-- A fold test reads the `hidden` slot of a section through
-  `net-test--folded-p` or `net-test--section` in the shared helper, and
-  a point test compares `magit-section-ident` values.  Do not assert on
-  the `net-line` text property: it is gone, together with the outline
-  search and the collapsed-title list.
-
+- Run `nix flake check` before you commit.  A byte-compile warning
+  breaks the build.
+- A new field belongs to the report builder, never to the renderer.
+  Add its key, its item and its value in `net-KIND-report`.
+- Renderers use only the helpers of `net-mode.el`.  Do not insert raw
+  text, and do not add a field outside the report.
+- Every row renderer opens a section whose value is its label, through
+  `net--field-value`.  Keep a count, a size and a timestamp out of a
+  section value, because the fold and the point record would die on
+  every render.
 - Markers stay inhibited in every inspect buffer.  Do not use
-  `magit-insert-section-body`, which signals on a marker free `end`;
-  the RDAP answer appends at `point-max`, which is the only edit after
-  a render, and an append keeps the integers of the earlier sections
-  valid.
-
-- Test files carry the `-test.el` suffix and live in `test/`, so the
-  checkPhase glob finds them and a new unit needs no flake edit.  The
-  shared fixture library `test/network-modes-test-helper.el` stays out
-  of that glob on purpose.  `ert-deftest` names read
-  `net-KIND-test-BEHAVIOR`, one KIND per file, so a selector such as
-  `-t net-asn-test` runs one unit.  Helper symbols use the `net-test--`
-  prefix, because `net-tests--` would read as a test name up front.
+  `magit-insert-section-body`, which signals on a marker free `end`.
+- A Boolean in a report holds `t` or `:json-false`.  A nil value means
+  unknown and encodes as `null`.
+- `network-modes.el` is the package door.  The `pname` in `flake.nix`
+  matches it, and no other file requires it.
+- Keep the four integration libraries out of the entry library and out
+  of `Package-Requires`.
+- A derived kind registers its report builder as `:report`, because
+  `net-refresh` compares it.  Keep that builder free of new side
+  effects.
+- A new command in `net-mode-map` belongs in `net-evil-keys`, and in
+  `net-evil-visual-keys` when visual state needs it.
+- Never vendor a database.  Add a flake input, a symlink in the data
+  derivation and a `defcustom` that defaults to
+  `(net-data-file "NAME")`.
+- An invalid value signals `user-error` from its inspect command and
+  never from a renderer.  An unknown value renders `unknown`.
+- Bump `net--binary-version` with `tools/pack-network-data.el` when
+  the packed layout changes.
 
 ## Conventions
 
-- Lines stay under 80 columns; docstrings wrap at the same width.
-
-- A new kind registers its report builder as `:report`, because
-  `net-refresh` calls it to decide whether a render changes anything.
-  Keep that builder free of side effects beyond the database caches, or
-  a refresh compares a report that differs from the rendered one on
-  every call.
-
-- Every `define-derived-mode` form carries `:interactive nil`, because
-  the modes serve `net-inspect` and the other entry points, and nobody
-  should start one on an empty buffer.
-
-- A renderer binds `net--with-label-counts` once per section, so the
-  label counters stay inside one parent.  A top-level item runs inside
-  the binding of `net--render-report`'s caller.
-
-- Read CSV through `net--read-csv-file`, so a quoted field can span
-  lines.  Normalize IANA registry rows with `net-ip--registry-blocks`:
-  the Address Block column can carry a ` [2]` footnote and can hold
-  several comma separated blocks.
-
-- The IANA special-purpose CSV is the primary classification source
-  for both `net-ip-mode` and `net-cidr-mode`.  The built-in table in
-  `net-ip--builtin-blocks` is the offline fallback, and its `:always`
-  rows join the CSV because the registries omit multicast.
-
-- `net-cidr-registry-file` and `net-cidr-registry-file-v6` alias the
-  `net-ip-registry-file` options of the same name.
-
-- A derived file carries its own name, not the upstream one.  The four
-  packed range tables come from `tools/pack-network-data.el`, whose
-  `bindat` types sit beside `net--binary-version` in `net-mode.el`.
-  Keep the raw upstream file reachable too, so the CSV and TSV readers
-  stay testable.
-
-- Capture `match-string` results before calling another function: the
-  callee may run `string-match` and clobber the match data.
+- Prefix: `net-KIND-` for the public symbols of a kind, `net--` for
+  internal helpers, `net-` for `defcustom`.
+- Declare a pure helper `(declare (pure t) (side-effect-free t))`.  A
+  function that runs a regexp keeps no declaration, because
+  `string-match` clobbers the match data.  A reader that fills a cache
+  keeps none either.
+- Keep lines under 80 columns, docstrings included.
+- Every `define-derived-mode` form carries `:interactive nil`.
+- A row that names a database file carries the text and the path in
+  two members, and the text comes from `net-data-description`, so a
+  store copy reads as a pinned copy.
+- Commit subject: one imperative sentence, optionally with a
+  `scope:` prefix.
+- Put a new decision next to the code that enforces it, in the
+  `;;; Commentary:` or in the docstring of that function.  This file
+  holds only what spans several files.
 
 ## Testing
 
-```sh
-emacs -Q --batch -L . -L test \
-  $(printf -- "-l %s " test/*-test.el) \
-  -f ert-run-tests-batch-and-exit
-```
-
-Every file needs `magit-section`, and `test/net-evil-test.el` needs evil
-on the load path.  Every test in that file skips when evil is absent,
-so a checkout without evil still passes:
+Run one suite by hand when you add a fixture:
 
 ```sh
 emacs -Q --batch -L . -L test -L "$MAGIT_SECTION_DIR" -L "$EVIL_DIR" \
@@ -758,71 +138,34 @@ emacs -Q --batch -L . -L test -L "$MAGIT_SECTION_DIR" -L "$EVIL_DIR" \
   -f ert-run-tests-batch-and-exit
 ```
 
-The suite uses temporary files for every database, so it never depends
-on the store paths of the Nix build.  One file per source unit lives in
-`test/` and ends in `-test.el`; shared fixtures and stubs live in
-`test/network-modes-test-helper.el`, whose name stays outside the glob.
-A new test file needs no flake edit, because `checkPhase` expands the
-same glob.  Every test file loads the helper, so the check adds `test/`
-to the load path.
-
-A test that needs a real render forces one with `(net-refresh t)`,
-because `net-refresh` renders nothing when the report did not change.
-That keeps a point or fold test honest, and the skip itself stays
-tested through the object identity of a section.
-
-`nix flake check` runs four gates:
-
-- `packages.network-modes`: `melpaBuild` byte-compiles with warnings as
-  errors, then copies `test/` back into the build and runs the globbed
-  suite twice in its `checkPhase`.  The build runs the wrapped Emacs
-  that carries `magit-section` and evil, because `net-evil.el` is
-  optional and the package declares no evil dependency.
-- `checks.package-lint`: ELPA policy on the modes and on `test/*.el`.
-  The package shares the short `net-` prefix, so the check whitelists
-  it, and `network-modes.el` serves as the main file for every test
-  file.  The lint Emacs carries `magit-section`, or the check reports
-  the declared dependency as not installable.
-- `checks.checkdoc`: docstring conventions in the modes and in
-  `test/*.el`.  checkdoc exits 0 on findings, so the check fails on
-  non-empty output.
-- `checks.data-tables`: runs the packed table readers against the real
-  data derivation, so the packer and the Elisp decoder cannot drift
-  apart unnoticed.
-
-Every check that runs Emacs takes `pkgs.writableTmpDirAsHomeHook` in
-`nativeBuildInputs`.  The hook gives the derivation a private writable
-home, so Emacs can write `~/.emacs.d` and tramp caches without sharing
-state with a concurrent check.  No check writes `export HOME=$TMPDIR`.
+- One `net-KIND-test.el` per source unit, and `ert-deftest` names read
+  `net-KIND-test-BEHAVIOR`.
+- Shared fixtures use the `net-test--` prefix and live in
+  `test/network-modes-test-helper.el`.  A new test file needs no flake
+  edit, because the check globs `test/*-test.el`.
+- Build every database fixture in a temporary file.  A test never
+  reads a store path.
+- Force a real render with `(net-refresh t)`.  A plain `net-refresh`
+  keeps the old tree when the report did not change.
+- A behaviour change ships a test.  The suite runs without the JSON
+  tree-sitter grammar and with it, so both parents of `net-json-mode`
+  stay covered.
 
 ## Dependencies
 
-Emacs 31.1 or newer.  One external Elisp package is required:
-`magit-section` (MELPA, from Magit 4), which pulls `compat`,
-`cond-let`, `llama` and `seq`.  It supplies the mode, the section
-tree, the fold commands, the motion keys and the visibility cache.
-The rest of the dependencies are built in: `bookmark`, `bindat`,
-`button`, `cl-lib`, `ffap`, `goto-addr`, `json`, `url`, `seq`,
-`treesit`, `xref` and (for `ol-net.el`) `ol`.  External Elisp
-packages stay optional: `embark` for `embark-net.el`, `evil` for
-`net-evil.el`, `package-lint` for the lint check.  `embark-net.el`
-does not register at load time; the user enables the global minor
-mode `embark-net-mode` after Embark loads.  `net-evil.el` requires
-evil, but `Package-Requires` stays free of it, so a user without evil
-installs nothing extra.
+| dependency | required? | why |
+|---|---|---|
+| Emacs | required | the floor in `Package-Requires` |
+| `magit-section` | required | mode, section tree, folds, motion |
+| `evil` | optional | `net-evil.el` and its ERT suite |
+| `embark` | optional | `embark-net.el` |
+| `package-lint` | optional | the lint check |
 
-Optional runtime data is listed in README.org.  No database is vendored
-in the repository.  The AS metadata and the two GeoIP files name a
-fixed commit, so `nix flake update` never moves them; a bump edits
-`flake.nix` by hand.  The IEEE, IANA and iptoasn files exist only in
-their current version, so they stay plain file inputs that `nix flake
-update` refreshes.
+Optional libraries never reach `Package-Requires`.  The build Emacs
+carries `magit-section` and evil, so the build and the check phases
+resolve both without an `EMACSLOADPATH` export.
 
 ## Open work
 
-- RPKI/ROA validation state per prefix
-- PeeringDB data for AS numbers
-- DNSBL lookups
-- Full IDNA (UTS #46) normalization
-- MMDB input for GeoIP
-- A port/service mode built on the IANA registry
+- See "Ideas not implemented" in `README.org`.  Delete an item there
+  when it lands.
