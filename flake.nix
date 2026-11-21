@@ -325,11 +325,11 @@
                   addresses, autonomous system numbers, domain names and
                   AF_VSOCK addresses.
 
-                  Every mode derives from `special-mode', so the buffers stay
-                  read-only.  Fields are copyable buttons and related
-                  addresses open their own inspect buffer.  One command,
-                  `net-inspect', sniffs the token at point and picks the
-                  right mode.
+                  Every mode derives from `magit-section-mode', so the
+                  buffers stay read-only and fold as a section tree.  Fields are
+                  copyable buttons and related addresses open their own inspect
+                  buffer.  One command, `net-inspect', sniffs the token at point
+                  and picks the right mode.
 
                   The modes read pinned offline databases: the IANA
                   special-purpose address registries, the IANA AS number and
