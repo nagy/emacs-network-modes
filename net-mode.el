@@ -1161,9 +1161,7 @@ The buffer shows the report of the buffer in `net--json-source' as
 pretty printed JSON.  It is read-only.  `net-json-view' creates it,
 and a refresh of the report buffer redraws it.  The machine carries
 the JSON tree-sitter grammar, so the view takes the faces and the
-navigation of `json-ts-mode'.
-
-\\{net-json-mode-map}"
+navigation of `json-ts-mode'."
       :group 'net
       :interactive nil
       (net--json-mode-setup))
@@ -1173,9 +1171,7 @@ The buffer shows the report of the buffer in `net--json-source' as
 pretty printed JSON.  It is read-only.  `net-json-view' creates it,
 and a refresh of the report buffer redraws it.  The machine carries
 no JSON tree-sitter grammar, so the view takes the faces of
-`js-json-mode'.
-
-\\{net-json-mode-map}"
+`js-json-mode'."
     :group 'net
     :interactive nil
     (net--json-mode-setup)))
@@ -1809,9 +1805,7 @@ A derived mode sets `net--render-function' to a function that calls
 The parent mode supplies the section tree: `TAB' folds the section of
 point, `C-c TAB' cycles the fold of a section and its children, `n'
 and `p' move between sections, `^' goes to the parent and `1' to `4'
-show that many levels.
-
-\\{net-mode-map}"
+show that many levels."
   :group 'net
   :interactive nil
   (setq-local revert-buffer-function #'net-refresh)
