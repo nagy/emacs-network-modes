@@ -146,7 +146,7 @@
           # megabytes of CSV and gunzipping a TSV on first use.  The raw
           # files stay linked for users who want the upstream shape.
           networkModesData =
-            pkgs.runCommand "network-modes-data"
+            pkgs.runCommandLocal "network-modes-data"
               {
                 meta.description = "Pinned network databases for the Emacs network modes";
                 # The packer loads `net-mode.el', which now needs
@@ -198,7 +198,7 @@
           # a grammar package as `parser'.  The wrapper gives the JSON
           # grammar the name that Emacs reads, so the JSON view can take
           # `json-ts-mode' when the machine carries it.
-          jsonGrammar = pkgs.runCommand "tree-sitter-json-emacs" { } ''
+          jsonGrammar = pkgs.runCommandLocal "tree-sitter-json-emacs" { } ''
             mkdir -p $out
             ln -s ${pkgs.tree-sitter-grammars.tree-sitter-json}/parser \
               $out/libtree-sitter-json.so
