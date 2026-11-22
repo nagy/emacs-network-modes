@@ -257,6 +257,7 @@
             in
             melpaBuild {
               pname = "network-modes";
+              preferLocalBuild = true;
               inherit version;
 
               src = lib.cleanSource ./.;
