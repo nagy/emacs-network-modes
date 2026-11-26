@@ -378,6 +378,10 @@
           # change, not only `nix build'.
           checks.package = networkModes;
 
+          # Same derivation under the name every other flake exposes, so
+          # `nix build .#checks.<system>.default' works here too.
+          checks.default = networkModes;
+
           # The packed range tables and the Elisp decoders must agree.
           # This check reads the real derivation, not a test fixture.
           checks.data-tables =
